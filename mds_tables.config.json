@@ -1,56 +1,112 @@
 {
-  "applications": {
-    "wp_core": {
-      "domain_name": "SELECT option_value from %db%.%prefix%options WHERE option_name = 'siteurl';",
-      "config_file": "wp-config.php",
-      "wp_comments": {
-        "key": "comment_ID",
-        "fields": [
-          "comment_content",
-          "comment_author_email"
-        ],
-        "escaped" : true
-      },
-      "wp_posts": {
-        "key": "ID",
-        "fields": [
-          "post_content"
-        ],
-        "escaped" : true
-      },
-      "wp_postmeta": {
-        "table_name": "postmeta",
-        "key": "meta_id",
-        "fields": [
-          "meta_value"
-        ],
-        "fields_additional_data": [
-          "meta_key"
-        ],
-        "escaped" : true,
-        "base64"  : true
-      },
-      "wp_options": {
-        "key": "option_id",
-        "fields": [
-          "option_value"
-        ],
-        "fields_additional_data": [
-          "option_name"
-        ],
-        "escaped" : true,
-        "base64"  : true
-      }
-    },
-    "joomla_core": {
-      "config_file": "configuration.php",
-      "jos_content": {
-        "key": "id",
-        "fields": [
-          "introtext",
-          "fulltext"
-        ]
-      }
+    "applications": {
+        "wp_core": {
+            "domain_name": "SELECT option_value from %db%.%prefix%options WHERE option_name = 'siteurl';",
+            "config_file": "wp-config.php",
+            "wp_comments": {
+                "key": "comment_ID",
+                "fields": [
+                    "comment_content",
+                    "comment_author_email"
+                ],
+                "escaped": true
+            },
+            "wp_posts": {
+                "key": "ID",
+                "fields": [
+                    "post_content"
+                ],
+                "escaped": true
+            },
+            "wp_postmeta": {
+                "table_name": "postmeta",
+                "key": "meta_id",
+                "fields": [
+                    "meta_value"
+                ],
+                "fields_additional_data": [
+                    "meta_key"
+                ],
+                "escaped": true,
+                "base64": true
+            },
+            "wp_options": {
+                "key": "option_id",
+                "fields": [
+                    "option_value"
+                ],
+                "fields_additional_data": [
+                    "option_name"
+                ],
+                "escaped": true,
+                "base64": true
+            },
+            "wp_hfcm_scripts": {
+                "key": "script_id",
+                "fields": [
+                    "snippet"
+                ],
+                "escaped": true
+            },
+            "wp_snippets": {
+                "key": "id",
+                "fields": [
+                    "code"
+                ]
+            }
+        },
+        "joomla_core": {
+            "config_file": "configuration.php",
+            "jos_content": {
+                "key": "id",
+                "fields": [
+                    "introtext",
+                    "fulltext"
+                ]
+            }
+        },
+        "magento_core": {
+            "domain_name": "SELECT value FROM %db%.%prefix%core_config_data WHERE path = 'web/secure/base_url';",
+            "config_file": [
+                "app/etc/env.php",
+                "app/etc/config.xml"
+            ],
+            "cms_page": {
+                "key": "page_id",
+                "fields": [
+                    "content"
+                ]
+            },
+            "cms_block": {
+                "key": "block_id",
+                "fields": [
+                    "content"
+                ]
+            },
+            "catalog_product_entity_text": {
+                "key": "value_id",
+                "fields": [
+                    "value"
+                ]
+            },
+            "email_template": {
+                "key": "template_id",
+                "fields": [
+                    "template_text"
+                ]
+            },
+            "core_email_template": {
+                "key": "template_id",
+                "fields": [
+                    "template_text"
+                ]
+            },
+            "catalog_category_entity_text": {
+                "key": "value_id",
+                "fields": [
+                    "value"
+                ]
+            }
+        }
     }
-  }
 }

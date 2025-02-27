@@ -5,33 +5,28 @@
 272-\d+\.gp/
 761-cheap-pills-\w+\.com
 945-//\d+\.ly
-972-a\.c\d+\.com
-986-\w\.c\d{4}\.com/
 1143-//uptoliked\.ru\b
 1144-//wq4\.ru\b
-1257-default7\.com
+1257-//default7\.com
 1306-//shareup\.ru\b
-1308-sh\.st/\w{3,10}
 1379-reltime2012\.ru/
 1534-//traffic2bitcoin\.com\b
-1540-odnaknopka\.ru/
-1552-\d+wp\.org/jquery\.js
+1540-//odnaknopka\.ru/
 1558-//js\.users\.\w+\.la\b
 1575-//go\.oclasrv\.com\b
-1643-findbetterresults\.com
+1643-//findbetterresults\.com
 1698-hook\d+up\d+\.com
 1732-//elodiemallea\.us\b
 1794-//top\.\w+\.xyz\b
-1824-cnhv\.co
+1824-//cnhv\.co\b
 1866-//cpm20\.com\b
 1929-//crypto-loot\.com\b
 2009-//stats\.startreceive\.tk\b
-2064-gethere\.info
+2064-//gethere\.info
 2136-//dlwordpress\.com\b
 2233-//dashsphere\.com\b
 2275-//authedmine\.com\b
 2277-//2track\.info\b
-2511-//blw4-1\.com\b
 2589-//cdn\.examhome\.net\b
 2592-//stat\.uustoughtonma\.org\b
 2604-134\.249\.116\.78
@@ -155,7 +150,6 @@
 11287-blackawardago\.com
 11288-mcafeepro\.com
 11289-weatherforecastmap\.com
-11421-info\-diet\.com
 11761-atagucsea\.com
 11762-imadarchid\.com
 11831-//loadsource\.org\b
@@ -234,8 +228,8 @@
 13675-sometimesfree\.biz
 13677-g00\.co
 13681-detectnewfavorite\.com
-13859-pccrackbox\.com
-13864-excrack\.com
+13859-//pccrackbox\.com
+13864-//excrack\.com
 14063-ayhanceylan\.av\.tr
 14266-//greatexpert\.su\b
 14272-hotelclassicinn\.in
@@ -245,7 +239,6 @@
 14525-onebet\.co\.ug
 14532-vakantieshanghai\.nl
 14535-//worldmodel\.biz\b
-14538-daeg\.su
 14545-zctrack\.com
 14546-subang\.go\.id
 14547-traffictrade\.life
@@ -277,7 +270,7 @@
 15487-ugroocuw\.net
 15489-lamontanabogor\.com
 15787-//(?:\w+\.)?yuotube\.com
-15790-cama\.it
+15790-//cama\.it\b
 15794-demo2\.cloudwp\.dev
 15795-track\.adsformarket\.com
 15796-jituogroup\.com
@@ -305,9 +298,9 @@
 19080-//buyviagraoverthecounterusabb\.net\b
 19081-casino2018money\.com
 19455-//(?:\w{1,15}\.)?effectivecpmgate\.com\b
-19463-vps777\.xyz
+19463-//vps777\.xyz
 19469-glasstoolsmart\.com
-19472-tiffanyflick\.com
+19472-//tiffanyflick\.com
 19475-//(?:\w+\.)?hansablowers\.com\b
 19479-renault\.parspake\.info
 19480-//lvita\.co\b
@@ -480,7 +473,6 @@
 20595-//gioithieudichvu\.vn\b
 20596-//ajwaalmosafer\.com\b
 20597-//0931tangfc\.com\b
-20599-//tamednation\.com\b
 20600-//mundialdeequipos\.com\.co\b
 20601-//sbhosale\.com\b
 20602-//revolver\-reloaded\.de\b
@@ -1207,7 +1199,6 @@
 23439-//kehauskitchenrestaurant\.com\b
 23440-//add\-website\.info\b
 23441-//vtol\.org\b
-23442-//ntust\-arch\-2021\-api\.monoame\.com\b
 23443-//katiamacedo\.com\.br\b
 23444-//ativanmedicine\.com\b
 23445-//sstools\.net\b
@@ -1370,7 +1361,6 @@
 23643-//www\.voyavel\.it\b
 23644-//blog\.gormey\.com\b
 23646-//www\.medvedy\.cz\b
-23647-//agernatura\.com\b
 23648-//torbayexperts\.com\b
 23649-//ikatmarketing\.com\b
 23650-//arabamericanbusinesscommunity\.org\b
@@ -2115,7 +2105,6 @@
 24654-//thelighthousenetwork\.org\b
 24655-//fromthetrenchesworldreport\.com\b
 24658-//www\.theaffiliateincome\.com\b
-24659-//vikstory\.ca\b
 24661-//go\.obermatsa\.com\b
 24662-//directcrack\.info\b
 24663-//nitrotrader\.com\b
@@ -2190,7 +2179,6 @@
 24756-//vitana\.in\b
 24757-//hentaidude\.xxx\b
 24758-//arisefacilitysolutions\.com\b
-24759-//www\.sxhxrj\.com\b
 24760-//3dintrovideos\.com\b
 24761-//benson\.com\.ua\b
 24762-//lamodespot\.com\b
@@ -2253,7 +2241,6 @@
 24847-//www\.tiswinetrail\.com\b
 24848-//www\.educar\.org\b
 24850-//kinaare\.in\b
-24853-//ardiccaykazani\.com\b
 24854-//doorsecurityy\.com\b
 24855-//budlife\.io\b
 24856-//antqe\.com\b
@@ -2265,7 +2252,6 @@
 24863-//zimolimo\.com\b
 24865-//iihttanzania\.com\b
 24866-//s2energia\.com\.br\b
-24867-//www\.chessbrainz\.com\b
 24868-//ciprofloxacin\.top\b
 24871-//quangha\.me\b
 24873-//almurshidimed\.com\b
@@ -2739,7 +2725,6 @@
 25561-//pdky\.com\b
 25562-//mfc\-moskva\-mo\.ru\b
 25563-//kavifurniture\.in\b
-25564-//www\.vinasamex\.com\b
 25566-//advantageequestrian\.com\b
 25567-//www\.zhijapan\.com\b
 25568-//www\.bsss\.info\b
@@ -2816,7 +2801,6 @@
 25649-//cydd\-bw\.org\b
 25650-//colombiasubsidio\.xyz\b
 25651-//www\.riobrasilword\.com\b
-25652-//(?:www\.)?upakcanna\.com\b
 25653-//www\.audiclub\-russia\.ru\b
 25654-//www\.ieelabs\.com\b
 25655-//coderoid\.ru\b
@@ -2892,8 +2876,6 @@
 25738-//www\.jesuspiece\.cash\b
 25739-//www\.castingpornofrancais\.com\b
 25740-//ogo\.gl\b
-25741-//www\.winning\-partnership\.com\b
-25742-//www\.talking\-rocks\.net\b
 25743-//anushkaautomation\.com\b
 25744-//daystarcare\.com\b
 25745-//www\.agriturismovecchiomulino\.it\b
@@ -3041,7 +3023,6 @@
 25895-//crackdj\.com\b
 25896-//2b3\.ru\b
 25897-//solucionesmefab\.com\b
-25898-//www\.carnecol\.com\b
 25899-//homelandevents\.co\.ke\b
 25900-//amulet\-club\.at\.ua\b
 25901-//fullfreecracked\.com\b
@@ -3079,7 +3060,6 @@
 25936-//joelazia\.com\b
 25937-//ivanmanchovski\.com\b
 25938-//originalthirdeye\.com\b
-25939-//www\.haozhun123\.com\b
 25940-//cheapwatchcopy\.com\b
 25942-//worldathome\.in\b
 25943-//octoberco\.com\b
@@ -3127,9 +3107,7 @@
 25989-//suknia\.net\b
 25990-//newfuture\.fr\b
 25991-//apiolivamiel\.com\b
-25993-//(?:www\.)?milawig\.com\b
 25994-//soaquefoli\.blogg\.se\b
-25996-//www\.demicolon\.com\b
 25998-//agedandchildren\.org\b
 25999-//www\.legittimazione\.it\b
 26000-//www\.iprofile\.it\b
@@ -3174,7 +3152,6 @@
 26041-//allatambulancia\.hu\b
 26042-//beam\-logistic\.com\b
 26043-//ortusbeauty\.com\b
-26044-//klining\-expert\.ru\b
 26046-//ahavietnam\.com\.vn\b
 26047-//ladariusgreen\.com\b
 26048-//www\.laishan\.cc\b
@@ -3191,7 +3168,6 @@
 26062-//ensan\-sd\.org\b
 26063-//cleocin\.life\b
 26064-//imeanclub\.com\b
-26065-//fid\.com\.ua\b
 26066-//hyperion\-project\.de\b
 26067-//kotyatki\.at\.ua\b
 26068-//alaediin\.com\b
@@ -3257,7 +3233,6 @@
 26132-//midtownhotelhue\.com\b
 26133-//4f26\.com\b
 26134-//elkscountrygolf\.com\b
-26135-//goldrockmines\.com\b
 26136-//allactivationkey\.com\b
 26137-//iwei\-ng\.org\b
 26138-//vereze\.com\b
@@ -3280,7 +3255,6 @@
 26155-//erythromycinethylsuccinate\.com\b
 26156-//csred\.org\b
 26157-//jkmarketing\.tk\b
-26158-//refsbank\.ru\b
 26160-//katanasword\.ru\b
 26161-//shobaddak\.com\b
 26162-//productscrack\.com\b
@@ -3311,7 +3285,6 @@
 26189-//www\.classicairjordanshoes\.com\b
 26190-//mishra\-enterprises\.com\b
 26191-//www\.footandmatch\.com\b
-26192-//loginpl777\.com\b
 26193-//maxwellfloorcoverings\.com\b
 26194-//hbselect\.com\b
 26196-//daniel\-group\.net\b
@@ -3333,7 +3306,6 @@
 26214-//lilyjacob\.com\b
 26215-//freeurlredirect\.com\b
 26216-//topfleamarket\.com\b
-26217-//mountzionsnellville\.com\b
 26218-//knowthycountry\.com\b
 26219-//zakup\.club\b
 26220-//dealstoheal\.com\b
@@ -3447,7 +3419,6 @@
 26339-//zardoubbeauty\.com\b
 26340-//www\.jobverliebt\.de\b
 26341-//beaumes\.co\b
-26342-//annekuemuraphd\.com\b
 26343-//china\-select\.com\b
 26344-//viagraonlinemy\.com\b
 26345-//crackproduct\.com\b
@@ -3462,7 +3433,6 @@
 26356-//expansaoconsultoria\.com\.br\b
 26357-//proproductkey\.com\b
 26358-//nhatheptienchebinhduong\.com\b
-26359-//www\.obilic\.com\.au\b
 26360-//simplygroup\.it\b
 26361-//fantasyartcomics\.com\b
 26364-//minhphatstone\.com\b
@@ -3888,10 +3858,8 @@
 26814-//yellowcrack\.com\b
 26815-//trkrspace\.com\b
 26816-//atvgroup\.eu\b
-26817-//siparis\.anka\-pak\.com\.tr\b
 26818-//balancingthecrazy\.com\b
 26819-//bglegal\.ru\b
-26820-//json\.stringengines\.com\b
 26821-//blog\-gegen\-rechts\.de\b
 26822-//fightfortransparencysociety\.org\b
 26823-//www\.indiesewhub\.com\b
@@ -3908,7 +3876,6 @@
 26835-//xn\-\-gr\-eka\.at\b
 26836-//stephenlambdin\.com\b
 26837-//rokometal\.com\b
-26838-//donnaandlord\.com\b
 26839-//rainbow\-syuan\.com\b
 26840-//kraken\-2krn\.com\b
 26841-//crackcut\.com\b
@@ -4034,7 +4001,6 @@
 26965-//nuwaay\.com\b
 26966-//guest\-bloggers\.com\b
 26967-//problems\-and\-puzzles\.com\b
-26968-//arbaeen\.ir\b
 26969-//flyzscan\.com\b
 26970-//texvasa\.com\b
 26971-//www\.khaokheowgolf\.com\b
@@ -4139,7 +4105,6 @@
 27081-//isaacjrfit\.com\b
 27083-//boomerlife\-icaniwillwatchme\.com\b
 27084-//www\.b3llaphotographyblog\.com\b
-27085-//raku\-yu\.jp\b
 27086-//tanthanhco\.vn\b
 27087-//www\.picturestoheaven\.com\b
 27088-//musichouse\.sa\b
@@ -4157,7 +4122,6 @@
 27100-//nvidiainspector\.ru\b
 27101-//shevolve\.online\b
 27102-//www\.ethicaleconomist\.com\b
-27103-//vojservices\.com\b
 27104-//sbobetrice\.com\b
 27105-//www\.homeprogram\.com\b
 27106-//stiedewantara\.ac\.id\b
@@ -4296,7 +4260,6 @@
 27244-//www\.locatii\.md\b
 27245-//www\.viesteturismo\.com\b
 27246-//annearundelthrives\.com\b
-27247-//milionforsmile\.at\.ua\b
 27248-//shipping200\.com\b
 27249-//vumview\.com\b
 27250-//coffeefirstmamalater\.com\b
@@ -4744,7 +4707,6 @@
 27774-//incredibletadoba\.com\b
 27775-//cirugiagenital\.com\.mx\b
 27776-//eminashville\.com\b
-27777-//wearableorgans\.com\b
 27778-//truongcuumedia\.com\b
 27779-//capitaldocampo\.com\.br\b
 27780-//wpsapk\.com\b
@@ -4887,7 +4849,6 @@
 27924-//girliestuffs\.com\b
 27925-//twipake\.co\.tz\b
 27926-//(?:\w+\.)?startservicefounds\.com\b
-27927-//go\.skimresources\.com\b
 27928-//zzb\.bz\b
 27929-//nozhinteb\.com\b
 27930-//dev\.jjjconstructions\.com\.au\b
@@ -5082,18 +5043,15 @@
 28234-//onlinepaydayloanstbb\.org\b
 28235-//dispatchweekly\.com\b
 28236-//(?:\w+\.)?polyfill\.io\b
-28237-//cloud\-websupport\.com\b
 28238-//37garant\.ru\b
 28247-//(?:\w+\.)?scontentflow\.com\b
 28248-//(?:\w+\.)?trustisimportant\.fun\b
 28249-//tempkool\.com\b
 28250-//brow\-ser\-update\.top\b
 28251-//muse\.krazzykriss\.com\b
-28252-//wsqg\.jpvacation\.com\b
 28253-//zoawufoy\.net\b
 28254-//secure\.gdcstatic\.com\b
 28255-//m\.exactag\.com\b
-28256-//(?:\w+\.)?mystiqueapi\.com\b
 28257-//(?:\w+\.)?eroom24\.com\b
 28258-//(?:\w+\.)?edc-enzymes\.net\b
 28259-//speedchaoptimise\.com\b
@@ -5103,7 +5061,6 @@
 28263-//(?:\w+\.)?mamacasinos\.com\b
 28264-//hostpdf\.co\b
 28265-//(?:\w+\.)?gdcstatic\.com\b
-28286-//go\.syndcloud\.com\b
 28287-//apicachebot\.com\b
 28288-//(?:\w+\.)?casinononaams\.it\b
 28289-//(?:\w+\.)?exycasinos\.com\b
@@ -5199,3 +5156,18 @@
 28380-//katempl\.cc\b
 28381-//cpmrevenuegate\.com\b
 28382-//catbaparadisehotel\.com\.vn\b
+28395-//leatherbook\.org\b
+28396-//vosgaem\.ru\b
+28397-//1wiipr\.xyz\b
+28398-\bdeveloper\.dbuglab\.com/\w+/\w+/shan/
+28399-//www\.oortech\.com\b
+28400-//suptop\.top\b
+28401-//jqbs\-get\.store\b
+28402-//d\-gadget\.net\b
+28403-//telegramff\.com\b
+28404-//(?:\w+\.)?mktcrafter\.com\b
+28405-//(?:\w+\.)?dnsphire\.com\b
+28406-//trifsavip\.xyz\b
+28407-//nightlifenavigators\.com\b
+28408-//zhongwen\-telegram\.com\b
+28409-//trezor\-setup\.webflow\.io\b
