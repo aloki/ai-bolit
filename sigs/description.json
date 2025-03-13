@@ -1,8 +1,8 @@
 {
     "items": [
         {
-            "md5sum": "1a2477ea27b01a21e7079e8590d83c90",
-            "modified": "2025-02-20T22:03:41+00:00",
+            "md5sum": "a07305bbec616406445ef18dc6b1844a",
+            "modified": "2025-03-11T17:54:09+00:00",
             "name": "aibolit/AIBOLIT-WHITELIST.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/AIBOLIT-WHITELIST.db"
         },
@@ -13,92 +13,92 @@
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/whitelistUrls.db"
         },
         {
-            "md5sum": "7bce1bbac944a1f307f408c7c2f0cfe8",
-            "modified": "2025-02-26T01:25:23+00:00",
+            "md5sum": "d418e91421116b4bf14b9d2d48577319",
+            "modified": "2025-03-11T17:54:09+00:00",
             "name": "aibolit/hyperscan/hs_js.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_js.db"
         },
         {
-            "md5sum": "b542a2a5b166054d83646ab6c77d913e",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "1b19be249400fdc99e7bc463b4f58875",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/hyperscan/version.txt",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/version.txt"
         },
         {
-            "md5sum": "63ef0452c421ff9f4e8197d5fb6819cf",
-            "modified": "2025-02-25T00:35:43+00:00",
+            "md5sum": "b1c8ed1bc98783b9c5dbbd00c078c196",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/hyperscan/hs_sus.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_sus.db"
         },
         {
-            "md5sum": "0aa879cbbac0d5127bc2c952f9205036",
-            "modified": "2025-02-26T01:25:23+00:00",
+            "md5sum": "73c328a80e46be81a0c618a3cbea6d44",
+            "modified": "2025-03-11T17:54:09+00:00",
             "name": "aibolit/hyperscan/hs_cron.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_cron.db"
         },
         {
-            "md5sum": "e6ba78bf06299baa5ddb57dd60fb5a49",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "33ee0e37eaae90bdadd42662a4436ecf",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/hyperscan/hs_susext.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_susext.db"
         },
         {
-            "md5sum": "99ac2db11656f5b6109e0cd9c6f36780",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "9a551afeb35cf3ebfac52ec8866c533c",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/hyperscan/hs_php.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_php.db"
         },
         {
-            "md5sum": "352339826df7709fd8fef63aa1053426",
-            "modified": "2025-02-26T01:25:23+00:00",
+            "md5sum": "16f8c16fdbcdc79a258e7e2b15bd1265",
+            "modified": "2025-03-11T17:54:09+00:00",
             "name": "aibolit/ai-bolit-hoster.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/ai-bolit-hoster.db"
         },
         {
-            "md5sum": "f3f70effbf7d7b543ab1dc4e447804e0",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "521280ba739fea971cab5451bd228c6c",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/mds-ai-bolit-hoster.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/mds-ai-bolit-hoster.db"
         },
         {
-            "md5sum": "4cbf8daf9c616ee0c44855c5e900f231",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "10236ef30e023605596de954fb369674",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/mds-procu2.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/mds-procu2.db"
         },
         {
-            "md5sum": "bf65d80f121938b9130e27054c11d03b",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "2cf26d1d5533f00ee58d2790ac91f616",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/patchman.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/patchman.db"
         },
         {
-            "md5sum": "d98e399278a43e97f69bf7564e9b2706",
-            "modified": "2025-02-26T01:25:23+00:00",
+            "md5sum": "4dae94922d9dd0cab7b704147283e754",
+            "modified": "2025-03-11T17:54:09+00:00",
             "name": "aibolit/ai-bolit-hoster-full.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/ai-bolit-hoster-full.db"
         },
         {
-            "md5sum": "9ff646d9629ee3818685a41bb100569c",
-            "modified": "2025-02-26T01:25:23+00:00",
+            "md5sum": "b5d496b1418082d8710d5676faf50d88",
+            "modified": "2025-03-11T17:54:09+00:00",
             "name": "aibolit/ai-bolit.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/ai-bolit.db"
         },
         {
-            "md5sum": "5caea998d08a000c7c14bed423edd6a8",
-            "modified": "2025-02-26T01:25:23+00:00",
+            "md5sum": "0f24894cc91bdc9331a1db860399e5e7",
+            "modified": "2025-03-11T17:54:09+00:00",
             "name": "aibolit/blacklistedUrls.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/blacklistedUrls.db"
         },
         {
-            "md5sum": "fca9219a673a9958f32d71057b3df90d",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "68a8e185831165f7b81c743025093491",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/patchman_map.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/patchman_map.db"
         },
         {
-            "md5sum": "156cdfe099d509b9e357ed16d222972a",
-            "modified": "2025-02-26T01:25:24+00:00",
+            "md5sum": "337dcbc93ad6cdeea9cc5ededd1a9e4b",
+            "modified": "2025-03-11T17:54:11+00:00",
             "name": "aibolit/procu2.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/procu2.db"
         },
