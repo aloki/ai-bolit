@@ -1908,7 +1908,6 @@
 24346-//bolumutluturizm\.com\b
 24347-//temperoalternativo\.com\.br\b
 24351-//storynory\.in\b
-24352-//jacutinga\.com\.br\b
 24353-//allaboutguitar\.co\.uk\b
 24357-//aguadocepiscinas\.com\.br\b
 24358-//caspertour\.asc\-florida\.com\b
@@ -2117,7 +2116,6 @@
 24671-//afrika247\.com\b
 24672-//go\.tygyguip\.com\b
 24673-//movie2freemax\.com\b
-24674-//tatraindia\.com\b
 24675-//firstfinancesllc\.com\b
 24677-//pop\.dojo\.cc/
 24678-//movie\-vip\.com\b
@@ -4288,7 +4286,6 @@
 27275-//bambuflores\.com\b
 27276-//sukkarbro\.com\b
 27278-//pontiarmada\.com\b
-27279-//oscarengineeringclasses\.com\b
 27280-//saritainfotech\.com\b
 27281-//proactivator\.net\b
 27282-//steroidsmax\.com\b
@@ -4343,7 +4340,6 @@
 27335-//el\-com\.org\b
 27336-//mundoconsultoria\.com\b
 27337-//oscareventshouse\.uk\b
-27338-//www\.teknoarge\.com\b
 27339-//interracialtruelove\.com\b
 27340-//www\.bbmproject\.it\b
 27341-//www\.vedraivedrai\.eu\b
@@ -4419,12 +4415,10 @@
 27415-//mexicogroups\.com\b
 27416-//huaweisolarinverter\.com\b
 27418-//hair\-med\.com\.pl\b
-27419-//digitalpoonam\.com\b
 27421-//smartjusticeaz\.org\b
 27422-//microturners\.co\.in\b
 27423-//talentmatchingeurope\.com\b
 27425-//dutadamaibanten\.id\b
-27427-//ueberland\.berlin\b
 27428-//www\.ingetic\.cl\b
 27429-//skillsarts\.com\b
 27434-//lourdesmissionyelagiri\.org\b
@@ -5171,3 +5165,6 @@
 28407-//nightlifenavigators\.com\b
 28408-//zhongwen\-telegram\.com\b
 28409-//trezor\-setup\.webflow\.io\b
+28410-//dvestich\.online\b
+28411-//instaembedcode\.com/(?:in\.js|v1)\b
+28412-//cialisfreesamples\.ru\b

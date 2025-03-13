@@ -20310,6 +20310,10 @@ class Deobfuscator
             $expected = (int)trim(MathCalc::calcRawString(' ' . $expected));
         }
 
+        if (empty($expected)) {
+            return $str;
+        }
+
         if (preg_match('~_0x\w+=function\(_0x\w+,_0x\w+\){_0x\w+=_0x\w+-\(?([^\);]+)\)?;~msi', $str, $delta)) {
             $delta = preg_replace_callback('~0x\w+~msi', function ($m) {
                 return Helpers::NormalizeInt($m[0]);
@@ -20353,6 +20357,9 @@ class Deobfuscator
             } catch (Exception $e) {
                 $item = array_shift($array);
                 $array[] = $item;
+            }
+            if ($i >= 100000) {
+                return $str;
             }
         }
 
@@ -20985,9 +20992,9 @@ class LoadSignaturesForScan
         if ($avdb_file && file_exists($avdb_file)) {
             $this->setCacheFile(__DIR__ . '/' . basename($avdb_file, '.db') . '.cache.db');
             $this->setSigDbLocation('external');
+            $this->result = self::SIGN_EXTERNAL;
             return $avdb_file;
         }
-
         //set local file
         if (!empty($this->params['mode']) && array_key_exists($this->params['mode'], self::ALLOWED_DBS)) {
             $db_file = self::ALLOWED_DBS[$this->params['mode']];
@@ -21003,6 +21010,7 @@ class LoadSignaturesForScan
         if (file_exists($avdb_file)) {
             $this->setCacheFile(__DIR__ . '/' . 'internal' . '.cache.db');
             $this->setSigDbLocation('internal');
+            $this->result = self::SIGN_INTERNAL;
             return $avdb_file;
         } else {
             throw new RuntimeException('No valid ' . $avdb_file . ' file found in provided or default locations.');

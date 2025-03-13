@@ -17,7 +17,7 @@ if (!defined('CLS_SCAN_CHECKERS')) {
 }
 
 if (!defined('MDS_VERSION')) {
-    define('MDS_VERSION', 'HOSTER-32.2.1');
+    define('MDS_VERSION', 'HOSTER-32.2.2');
 }
 
 $scan_signatures    = null;
@@ -540,9 +540,13 @@ function loadMalwareSigns($config)
     $clean_signatures = null;
 
     if ($config->get(MDSConfig::PARAM_SCAN) || $config->get(MDSConfig::PARAM_CLEAN) || $config->get(MDSConfig::PARAM_RESTORE)) {
-        $avdb = trim($config->get(MDSConfig::PARAM_AV_DB) ?? '');
+        $avdb = $config->get(MDSConfig::PARAM_AV_DB) ?? '';
+        if (is_array($avdb)) {
+            $avdb = end($avdb);
+        }
+        $avdb = trim($avdb);
         $debug = new DebugMode();
-        $scan_signatures = new LoadSignaturesForScan($avdb, 2, $debug, ["params" => "mds"]);
+        $scan_signatures = new LoadSignaturesForScan($avdb, 2, $debug, ["mode" => "mds"]);
         if ($scan_signatures->getResult() == LoadSignaturesForScan::SIGN_EXTERNAL) {
             echo 'Loaded external scan signatures from ' . $avdb . PHP_EOL;
         }
@@ -560,8 +564,12 @@ function loadMalwareSigns($config)
         $scan_signatures->whiteUrls = new MDSUrls($whiteUrls);
 
         if ($config->get(MDSConfig::PARAM_CLEAN)) {
-            $procudb = trim($config->get(MDSConfig::PARAM_PROCU_DB) ?? '');
-            $clean_signatures = new LoadSignaturesForClean('', $procudb);
+            $procudb = $config->get(MDSConfig::PARAM_PROCU_DB) ?? '';
+            if (is_array($procudb)) {
+                $procudb = end($procudb);
+            }
+            $procudb = trim($procudb);
+            $clean_signatures = new LoadSignaturesForClean('', $procudb, ["mds" => true]);
             if ($clean_signatures->getDBLocation() == 'external') {
                 echo 'Loaded external clean signatures from ' . $procudb . PHP_EOL;
             }
@@ -3938,7 +3946,7 @@ class MDSCMSConfigFilter
 
     private function fileExistsAndNotNull(FileInfo $file)
     {
-        return ($file->is_file() && $file->file_exists() && ($file->getSize() > 2048));
+        return ($file->is_file() && $file->file_exists() && ($file->getSize() > 1000));
     }
 
     /**
@@ -4411,11 +4419,14 @@ class MDSCMSAddon
                     break;
                 }
             }
+            if (!$this->path) {
+                throw new MDSException(MDSErrors::MDS_INVALID_CMS_CONFIG, $path . '/' . implode("|",static::CONFIG_FILE));
+            }
         } else {
             $this->path = $this->getPath($path, static::CONFIG_FILE);
-        }
-        if (!$this->path) {
-            throw new MDSException(MDSErrors::MDS_INVALID_CMS_CONFIG, $path . '/' . static::CONFIG_FILE);
+            if (!$this->path) {
+                throw new MDSException(MDSErrors::MDS_INVALID_CMS_CONFIG, $path . '/' . static::CONFIG_FILE);
+            }
         }
     }
 
@@ -4609,6 +4620,10 @@ class MDSWpcoreConfig extends MDSCMSAddon
 {
     const CONFIG_FILE = 'wp-config.php';
 
+    /**
+     * @return array|false
+     * @throws MDSException
+     */
     public function parseConfig()
     {
         $res = [];
@@ -4702,94 +4717,153 @@ class MDSMagentocoreConfig extends MDSCMSAddon
 
     /**
      * @return array|false
+     * @throws MDSException
      */
+
     public function parseConfig()
     {
         foreach (self::CONFIG_FILE as $version => $file) {
             if (file_exists($this->path . '/' . $file)) {
-                $config = @file_get_contents($this->path . '/' . $file, false, null, 0, 50000);
-                if ($config) {
-                    $method = "Parse{$version}Config";
-                    return $this->$method($config);
-                } else {
-                    throw new MDSException(MDSErrors::MDS_INVALID_CMS_CONFIG, $this->path . '/' . $file);
+                $method = "Parse{$version}Config";
+                if (method_exists($this, $method)) {
+                    return $this->$method($this->path . '/' . $file);
                 }
             }
         }
-        return false;
+        throw new MDSException(MDSErrors::MDS_INVALID_CMS_CONFIG, $this->path . '/app/etc/env.php|config.xml');
     }
 
     /**
-     * @param $config
+     * @param $path
+     * @param $file
      * @return array|false
      */
-    private function ParseMagento2Config($config)
+    private function ParseMagento2Config($path)
     {
-        $res = [];
-        if ($db_name = MDSParseContent::parseMagento2Config('dbname', $config)) {
-            $res['db_name'] = $db_name;
-        }
-        if ($db_user = MDSParseContent::parseMagento2Config('username', $config)) {
-            $res['db_user'] = $db_user;
-        }
-        if ($db_pass = MDSParseContent::parseMagento2Config('password', $config)) {
-            $res['db_pass'] = $db_pass;
-        }
-        if ($db_host = MDSParseContent::parseMagento2Config('host', $config)) {
-            $host = explode(':', $db_host);
-            $res['db_host'] = $host[0];
-            $res['db_port'] = isset($host[1]) ? (int)$host[1] : 3306;
-        }
-
-        if ($db_prefix = MDSParseContent::parseMagento2Config('table_prefix', $config)) {
-            $res['db_prefix'] = $db_prefix;
+        $dbBlock = $this->extractMagento2DBBlock($path);
+        if (!empty($dbBlock)) {
+            $dbConfig = $this->extractMagento2DBCredentials($dbBlock);
+            if ($dbConfig['db_name']) {
+                $dbConfig['db_app']    = 'magento_core';
+                $dbConfig['db_path']   = $this->path;
+                $dbConfig['db_prefix'] = $dbConfig['db_prefix'] ?? '';
+                return $dbConfig;
+            }
         } else {
-            $res['db_prefix'] = '';
+            return false;
+        }
+    }
+
+    /**
+     * @param $path
+     * @return array|false
+     */
+    private function ParseMagento1Config($path)
+    {
+        $xml = $this->loadMagento1Config($path);
+
+        if (!$xml) {
+            return false;
         }
 
-        if (
-            isset($res['db_name'], $res['db_user'], $res['db_pass'], $res['db_host'], $res['db_port'], $res['db_prefix'])
-        ) {
-            $res['db_app'] = 'magento_core';
-            $res['db_path'] = $this->path;
-            return $res;
+        $dbConfig = $xml->global->resources->default_setup->connection;
+
+        if ($dbConfig->dbname) {
+            return [
+                'db_name'     => (string) $dbConfig->dbname,
+                'db_user'     => (string) $dbConfig->username ?? null,
+                'db_pass'     => (string) $dbConfig->password ?? null,
+                'db_host'     => (string) $dbConfig->host ?? null,
+                'db_port'     => 3306,
+                'db_prefix' => '',
+                'db_app'    => 'magento_core',
+                'db_path'   => $this->path,
+            ];
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * @param $filePath
+     * @return false|SimpleXMLElement
+     */
+    private static function loadMagento1Config($filePath)
+    {
+        if (!file_exists($filePath)) {
+            return false;
+        }
+
+        $options = LIBXML_NONET | LIBXML_NOENT | LIBXML_NOCDATA | LIBXML_NOWARNING | LIBXML_ERR_FATAL;
+
+        $xml = simplexml_load_file($filePath, 'SimpleXMLElement', $options);
+
+        return $xml ?: false;
+    }
+
+
+    /**
+     * @param $content
+     * @return array|string|string[]
+     */
+    private function normalizeMagentoConfig($content)
+    {
+        $content = preg_replace('/\s+/', '', $content);
+
+        $content = str_replace('"', "'", $content);
+
+        return $content;
+    }
+
+    /**
+     * @param $filePath
+     * @return false|string
+     */
+    private function extractMagento2DBBlock($filePath)
+    {
+        if (!file_exists($filePath)) {
+            return false;
+        }
+
+        $content = @file_get_contents($filePath);
+        if (!$content) {
+            return false;
+        }
+
+        $content = $this->normalizeMagentoConfig($content);
+
+        $pattern = "/'db'=>?(?:array\(|\[)(.*?)(?:\)|\])\s*,/s";
+        if (preg_match($pattern, $content, $matches)) {
+            return $matches[1];
         }
 
         return false;
     }
 
     /**
-     * @param $config
+     * @param $dbBlock
      * @return array|false
      */
-    private function ParseMagento1Config($config)
+    private function extractMagento2DBCredentials(string $dbBlock)
     {
-        $res = [];
-        if ($db_name = MDSParseContent::parseMagento1Config('dbname', $config)) {
-            $res['db_name'] = $db_name;
-        }
-        if ($db_user = MDSParseContent::parseMagento1Config('username', $config)) {
-            $res['db_user'] = $db_user;
-        }
-        if ($db_pass = MDSParseContent::parseMagento1Config('password', $config)) {
-            $res['db_pass'] = $db_pass;
-        }
-        if ($db_host = MDSParseContent::parseMagento1Config('host', $config)) {
-            $res['db_host'] = $db_host;
-            $res['db_port'] = 3306;
+        $keys = ['table_prefix' => 'db_prefix', 'host' => 'db_host', 'dbname' => 'db_name', 'username' => 'db_user', 'password' => 'db_pass'];
+        $credentials = [];
+
+        foreach ($keys as $key => $value) {
+            if (preg_match("/['\"]{$key}['\"]\s*=>\s*['\"]([^'\"]+)['\"]/", $dbBlock, $matches)) {
+                $credentials[$value] = trim($matches[1]);
+            }
         }
 
-        $res['db_prefix'] = '';
-
-        if (
-            isset($res['db_name'], $res['db_user'], $res['db_pass'], $res['db_host'], $res['db_port'])
-        ) {
-            $res['db_app'] = 'magento_core';
-            $res['db_path'] = $this->path;
-            return $res;
+        if (!empty($credentials['db_host']) && strpos($credentials['db_host'], ':') !== false) {
+            list($host, $port) = explode(':', $credentials['db_host']);
+            $credentials['db_host'] = trim($host);
+            $credentials['db_port'] = (int) trim($port);
+        } else {
+            $credentials['db_port'] = 3306; // Default MySQL port
         }
 
-        return false;
+        return !empty($credentials) ? $credentials : false;
     }
 }
 
@@ -5757,39 +5831,6 @@ class MDSParseContent
         return false;
     }
 
-    public static function parseMagento2Config($key, $content)
-    {
-        $dbPattern = "~'db'\s*=>\s*\[(.*?)\],~msi";
-
-        if (preg_match($dbPattern, $content, $dbMatches)) {
-            $dbBlock = $dbMatches[1];
-
-            $keyPattern = "~['\"]" . preg_quote($key, '~') . "['\"]\s*=>\s*(?|(\d+)|('.*?(?<!\\\\)')|(\".*?(?<!\\\\)\"))~msi";
-
-            if (preg_match($keyPattern, $dbBlock, $keyMatches)) {
-                if (isset($keyMatches[1])) {
-                    if (in_array($keyMatches[1][0], ['"', "'"])) {
-                        return self::getStringFromPHPStringWithQuotes($keyMatches[1]);
-                    }
-                    return $keyMatches[1];
-                }
-            }
-        }
-
-        return false;
-    }
-
-    public static function parseMagento1Config($key, $content)
-    {
-        $pattern = '~<' . preg_quote($key, '~') . '>(.*?)</' . preg_quote($key, '~') . '>~msi';
-
-        if (preg_match($pattern, $content, $matches)) {
-            return trim($matches[1]);
-        }
-
-        return false;
-    }
-
     private static function getStringFromPHPStringWithQuotes($string_with_quotes)
     {
         $escaped_characters = [
@@ -6728,9 +6769,9 @@ class LoadSignaturesForScan
         if ($avdb_file && file_exists($avdb_file)) {
             $this->setCacheFile(__DIR__ . '/' . basename($avdb_file, '.db') . '.cache.db');
             $this->setSigDbLocation('external');
+            $this->result = self::SIGN_EXTERNAL;
             return $avdb_file;
         }
-
         //set local file
         if (!empty($this->params['mode']) && array_key_exists($this->params['mode'], self::ALLOWED_DBS)) {
             $db_file = self::ALLOWED_DBS[$this->params['mode']];
@@ -6746,6 +6787,7 @@ class LoadSignaturesForScan
         if (file_exists($avdb_file)) {
             $this->setCacheFile(__DIR__ . '/' . 'internal' . '.cache.db');
             $this->setSigDbLocation('internal');
+            $this->result = self::SIGN_INTERNAL;
             return $avdb_file;
         } else {
             throw new RuntimeException('No valid ' . $avdb_file . ' file found in provided or default locations.');
@@ -25418,6 +25460,10 @@ class Deobfuscator
             $expected = (int)trim(MathCalc::calcRawString(' ' . $expected));
         }
 
+        if (empty($expected)) {
+            return $str;
+        }
+
         if (preg_match('~_0x\w+=function\(_0x\w+,_0x\w+\){_0x\w+=_0x\w+-\(?([^\);]+)\)?;~msi', $str, $delta)) {
             $delta = preg_replace_callback('~0x\w+~msi', function ($m) {
                 return Helpers::NormalizeInt($m[0]);
@@ -25461,6 +25507,9 @@ class Deobfuscator
             } catch (Exception $e) {
                 $item = array_shift($array);
                 $array[] = $item;
+            }
+            if ($i >= 100000) {
+                return $str;
             }
         }
 

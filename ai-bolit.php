@@ -1,7 +1,7 @@
 <?php
 
 ///////////////////////////////////////////////////////////////////////////
-// Version: 32.2.1
+// Version: 32.2.2
 // Copyright 2018-2025 CloudLinux Software Inc.
 ///////////////////////////////////////////////////////////////////////////
 
@@ -175,7 +175,7 @@ if (!(function_exists("file_put_contents") && is_callable("file_put_contents")))
     exit;
 }
 
-define('AI_VERSION', '32.2.1');
+define('AI_VERSION', '32.2.2');
 
 ////////////////////////////////////////////////////////////////////////////
 $g_SpecificExt = false;
@@ -961,7 +961,7 @@ $vars->blackFiles = [];
 
 $debug = new DebugMode(DEBUG_MODE, DEBUG_PERFORMANCE, DEBUG_PCRE);
 
-$vars->signs = new LoadSignaturesForScan(isset($defaults['avdb']) ? $defaults['avdb'] : null, AI_EXPERT, $debug, ["params" => "ai-bolit"]);
+$vars->signs = new LoadSignaturesForScan(isset($defaults['avdb']) ? $defaults['avdb'] : null, AI_EXPERT, $debug, ["mode" => "ai-bolit"]);
 
 if (defined('HS')) {
     HyperScan::initExtDb(HS, $vars->signs->getDBMetaInfoVersion());
@@ -2635,9 +2635,9 @@ class LoadSignaturesForScan
         if ($avdb_file && file_exists($avdb_file)) {
             $this->setCacheFile(__DIR__ . '/' . basename($avdb_file, '.db') . '.cache.db');
             $this->setSigDbLocation('external');
+            $this->result = self::SIGN_EXTERNAL;
             return $avdb_file;
         }
-
         //set local file
         if (!empty($this->params['mode']) && array_key_exists($this->params['mode'], self::ALLOWED_DBS)) {
             $db_file = self::ALLOWED_DBS[$this->params['mode']];
@@ -2653,6 +2653,7 @@ class LoadSignaturesForScan
         if (file_exists($avdb_file)) {
             $this->setCacheFile(__DIR__ . '/' . 'internal' . '.cache.db');
             $this->setSigDbLocation('internal');
+            $this->result = self::SIGN_INTERNAL;
             return $avdb_file;
         } else {
             throw new RuntimeException('No valid ' . $avdb_file . ' file found in provided or default locations.');
@@ -8564,7 +8565,7 @@ class Scanner
         }
 
         // ignore itself
-        if (strpos($l_Content, '408fe4bd87932fbf4be1738f49d44f5c') !== false) {
+        if (strpos($l_Content, '@@AIBOLIT_SIG_000000000000@@') !== false) {
             $this->addStatsItem('checker_before_norm', 'ignore_selfscan', $file);
             HashVerdicts::add($file->getSha256(), 'checker_before_norm:ignore_selfscan');
             return false;
@@ -14199,6 +14200,9 @@ class RapidAccountScan
     private $old_rescan_ts = false;
     private $ca = null;
 
+    protected $action_rules = [];
+    protected $report_rules = [];
+
     /**
      * RapidAccountScan constructor.
      * @param RapidScanStorage $rapidScanStorage
@@ -14219,6 +14223,203 @@ class RapidAccountScan
         if ($this->freq !== false) {
             $this->old_rescan_ts = $this->db->getOldTsForRescan($this->freq, 1000);
         }
+
+        $this->action_rules = [
+            [
+                // This types always will be rescanned and hash recalculated
+                // all changed and new files will have type NEWFILE
+                'action'    => "ALWAYS_RECALC_HASH",
+                'verdicts'  => [
+                    RapidScanStorageRecord::UNKNOWN,
+                    RapidScanStorageRecord::CONFLICT,
+                    RapidScanStorageRecord::NEWFILE,
+                ],
+                'rescan'    => null,
+                'condition' => null
+            ],
+            [
+                // This types always will be rescanned hash will be used from RAS db
+                'action'    => "ALWAYS",
+                'verdicts'  => [
+                    RapidScanStorageRecord::WHITE_EXTENDED,
+                    RapidScanStorageRecord::BLACK
+                ],
+                'rescan'    => null,
+                'condition' => null
+            ],
+            [
+                //This types will never be rescanned
+                'action'    => "NEVER",
+                'verdicts'  => [
+                    RapidScanStorageRecord::WHITE,
+                    RapidScanStorageRecord::DUAL_USE,
+                    RapidScanStorageRecord::RX_SKIPPED_SMART,
+                    RapidScanStorageRecord::RX_SKIPPED_DIE
+                ],
+                'rescan'    => null,
+                'condition' => null
+            ],
+            [
+                // This types will be rescanned if signature that we detected before, now not present in signature db
+                // if files not changed, hash from ras db will be used.
+                'action'    => "NO_SIG",
+                'verdicts'  => [
+                    RapidScanStorageRecord::RX_MALWARE,
+                    RapidScanStorageRecord::RX_SUSPICIOUS,
+                    RapidScanStorageRecord::RX_SUSPICIOUS_IGNORED,
+                ],
+                'rescan'    => null,
+                'condition' => function (RapidScanStorageRecord $file, $rescan, $old_scanned, $scanner, $vars) {
+                    return !(strlen($file->getSignature()) > 0 && isset($vars->signs->_Mnemo[$file->getSignature()]));
+                }
+            ],
+            [
+                // This types will be rescanned in case rescan_all mode,
+                // if files not changed, hash from ras db will be used.
+                'action'    => "RESCAN_ALL",
+                'verdicts'  => [
+                    RapidScanStorageRecord::RX_SUSPICIOUS,
+                    RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED,
+                    RapidScanStorageRecord::RX_SUSPICIOUS_IGNORED,
+                    RapidScanStorageRecord::RX_GOOD,
+                    RapidScanStorageRecord::RX_MALWARE,
+                    RapidScanStorageRecord::HEURISTIC
+                ],
+                'rescan'    => self::RESCAN_ALL,
+                'condition' => null
+            ],
+            [
+                // This types will be rescanned in case rescan_suspicious mode,
+                // if files not changed, hash from ras db will be used.
+                'action'    => "RESCAN_SUSPICIOUS",
+                'verdicts'  => [
+                    RapidScanStorageRecord::RX_SUSPICIOUS,
+                    RapidScanStorageRecord::RX_SUSPICIOUS_IGNORED,
+                    RapidScanStorageRecord::HEURISTIC,
+                    RapidScanStorageRecord::BLACK,
+                    RapidScanStorageRecord::RX_MALWARE,
+                ],
+                'rescan'    => self::RESCAN_SUSPICIOUS,
+                'condition' => null
+            ],
+            [
+                // This types will be rescanned in case rescan_suspicious mode,
+                // if files not changed, hash from ras db will be used.
+                // rescan_frequency condition must be met for rescan.
+                'action'    => "RESCAN_SUSPICIOUS_FREQ",
+                'verdicts'  => [RapidScanStorageRecord::RX_GOOD, RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED],
+                'rescan'    => self::RESCAN_SUSPICIOUS,
+                'condition' => function (RapidScanStorageRecord $file, $rescan, $old_scanned, $scanner, $vars) {
+                    return ($this->freq !== false && $this->old_rescan_ts !== false && $old_scanned <= $this->old_rescan_ts);
+                }
+            ],
+        ];
+
+        $this->report_rules = [
+            [
+                'verdicts' => [RapidScanStorageRecord::HEURISTIC],
+                'data'     => [
+                    'indexKey'    => "criticalPHP",
+                    'fragmentKey' => "criticalPHPFragment",
+                    'sigKey'      => "criticalPHPSig",
+                    'fixedSig'    => 'SMW-HEUR-ELF'
+                ],
+                'condition' => function (RapidScanStorageRecord $file, $vars) {
+                    return defined('USE_HEURISTICS');
+                }
+            ],
+            [
+                'verdicts' => [RapidScanStorageRecord::HEURISTIC],
+                'data'     => [
+                    'indexKey'    => "warningPHP",
+                    'fragmentKey' => "warningPHPFragment",
+                    'sigKey'      => "warningPHPSig",
+                    'fixedSig'    => 'SMW-HEUR-ELF'
+                ],
+                'condition' => function (RapidScanStorageRecord $file, $vars) {
+                    return defined('USE_HEURISTICS_SUSPICIOUS');
+                }
+            ],
+            [
+                'verdicts' => [RapidScanStorageRecord::RX_MALWARE],
+                'data'     => [
+                    'indexKey'    => "criticalJS",
+                    'fragmentKey' => "criticalJSFragment",
+                    'sigKey'      => "criticalJSSig",
+                    'fixedSig'    => null,
+                ],
+                'condition' => function (RapidScanStorageRecord $file, $vars) {
+                    return strtolower($file->getExtension()) === 'js';
+                }
+            ],
+            [
+                'verdicts' => [RapidScanStorageRecord::RX_MALWARE],
+                'data'     => [
+                    'indexKey'    => "criticalPHP",
+                    'fragmentKey' => "criticalPHPFragment",
+                    'sigKey'      => "criticalPHPSig",
+                    'fixedSig'    => null,
+                ],
+                'condition' => function (RapidScanStorageRecord $file, $vars) {
+                    return strtolower($file->getExtension()) !== 'js';
+                }
+            ],
+            [
+                'verdicts' => [RapidScanStorageRecord::RX_SUSPICIOUS_IGNORED],
+                'data'     => [
+                    'indexKey'    => "suspiciousIgn",
+                    'fragmentKey' => "suspiciousIgnFragment",
+                    'sigKey'      => "suspiciousIgnSig",
+                    'fixedSig'    => null
+                ],
+                'condition' => null
+            ],
+            [
+                'verdicts' => [RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED],
+                'data'     => [
+                    'indexKey'    => "suspiciousExt",
+                    'fragmentKey' => "suspiciousExtFragment",
+                    'sigKey'      => "suspiciousExtSig",
+                    'fixedSig'    => function (RapidScanStorageRecord $file, $vars) {
+                        return 'SMW-ESUS-' . $file->getSignature();
+                    }
+                ],
+                'condition' => null
+            ],
+            [
+                'verdicts' => [RapidScanStorageRecord::RX_SUSPICIOUS],
+                'data'     => [
+                    'indexKey'    => "warningPHP",
+                    'fragmentKey' => "warningPHPFragment",
+                    'sigKey'      => "warningPHPSig",
+                    'fixedSig'    => null
+                ],
+                'condition' => null
+            ],
+        ];
+    }
+
+    private function getActionForFile(RapidScanStorageRecord $file, $rescan, $oldScanned, $vars)
+    {
+        $verdict = $file->getVerdict();
+        foreach ($this->action_rules as $rule) {
+            // If in rule rescan mode don't match - skip rule
+            if (isset($rule['rescan']) && $rule['rescan'] !== null && $rule['rescan'] !== $rescan) {
+                continue;
+            }
+            // if verdict match rules verdicts
+            if (in_array($verdict, $rule['verdicts'])) {
+                // if condition set - check it
+                if (isset($rule['condition']) && is_callable($rule['condition'])) {
+                    if ($rule['condition']($file, $rescan, $oldScanned, $this, $vars)) {
+                        return $rule['action'];
+                    }
+                } else {
+                    return $rule['action'];
+                }
+            }
+        }
+        return "NEVER"; // default
     }
 
     /**
@@ -14464,6 +14665,58 @@ class RapidAccountScan
         $this->scanlist = [];
     }
 
+    /**
+     * Enqueue file for rescan and update stats.
+     *
+     * @param int $index
+     * @param RapidScanStorageRecord $file
+     */
+    private function enqueueFile(int $index, RapidScanStorageRecord $file)
+    {
+        $this->rsAddStatsItem(true, $file);
+        $this->scanlist[$index] = $file;
+    }
+
+    /**
+     * Save cache to RAS db and update stats.
+     *
+     * @param RapidScanStorageRecord $file
+     */
+    private function commitFile(RapidScanStorageRecord $file)
+    {
+        $this->db->put($file);
+        $this->rsAddStatsItem(false, $file);
+    }
+    /**
+     * Generic function to add cached data from RAS db to aibolit report
+     *
+     * @param int                     $i           file index
+     * @param RapidScanStorageRecord  $file        RAS db record
+     * @param object                  $vars        context
+     * @param string                  $data        array for reporting data.
+     *
+     * if $data['fixedSig'] === null, function tries to get signature from cache
+     * if $data['fixedSig'] is callable, function calls it to get signature name
+     * else $data['fixedSig'] is used as signature name
+     */
+    private function processGenericReport(int $i, RapidScanStorageRecord $file, $vars, array $data)
+    {
+        $fixedSig = $data['fixedSig'] ?? null;
+        if ($fixedSig === null) {
+            $sigId = $file->getSignature();
+            $sigToUse = $sigId;
+        } elseif (is_callable($fixedSig)) {
+            $sigToUse = $fixedSig($file, $vars);
+        } else {
+            $sigToUse = $fixedSig;
+        }
+        $snippet = $file->getSnippet();
+        $vars->{$data['indexKey']}[]    = $i;
+        $vars->{$data['fragmentKey']}[] = $snippet;
+        $vars->{$data['sigKey']}[]      = $sigToUse;
+        $this->scanner->AddResult($file, $i, $vars);
+    }
+
     private function scanFile($filename, $rescan, $i, $vars)
     {
         $rxgood_rescan = false;
@@ -14480,182 +14733,53 @@ class RapidAccountScan
             $old_value->setIndex($file->getIndex());
             $old_scanned = $old_value->getScannedTs();
             if ($file->getUpdatedTs() <= $old_scanned) {
+                // file was scanned before and not changed, let's get FileInfo from RAS db
                 $file = $old_value;
                 $file->setFilename($filename);
             }
         }
 
-        if (
-            $file->getVerdict() === RapidScanStorageRecord::UNKNOWN
-            || $file->getVerdict() === RapidScanStorageRecord::CONFLICT
-            || $file->getUpdatedTs() > $old_scanned
-        ) {
-            // these files have changed, or we know nothing about them, lets re-calculate sha2
-            // and do full scan
-            $file->calcSha2();
-            $this->rsAddStatsItem(true, $file);
+        if ($file->getUpdatedTs() > $old_scanned) {
+            //file changed since last scan let set verdict to NEWFILE
             $file->setVerdict(RapidScanStorageRecord::NEWFILE);
-            $this->scanlist[$i] = $file;
-        } elseif ($file->getVerdict() === RapidScanStorageRecord::BLACK) {
-            $this->scanlist[$i] = $file;
-            $this->rsAddStatsItem(true, $file);
-        } elseif ($file->getVerdict() === RapidScanStorageRecord::DUAL_USE) {
-            $this->db->put($file);
-            $this->rsAddStatsItem(false, $file);
-        } elseif (
-            $rescan === self::RESCAN_NONE
-            && $file->getVerdict() === RapidScanStorageRecord::RX_MALWARE
-        ) {
-            //these files were detected as rx malware before, let's report them
-            $sigId = $file->getSignature();
+        }
 
-            if (isset($sigId) && isset($vars->signs->_Mnemo[$sigId])) {
-                $snippet = $file->getSnippet();
-                if (strtolower($file->getExtension()) === 'js') {
-                    $vars->criticalJS[] = $i;
-                    $vars->criticalJSFragment[] = $snippet;
-                    $vars->criticalJSSig[] = $sigId;
-                } else {
-                    $vars->criticalPHP[] = $i;
-                    $vars->criticalPHPFragment[] = $snippet;
-                    $vars->criticalPHPSig[] = $sigId;
+        $action = $this->getActionForFile($file, $rescan, $old_scanned, $vars);
+        $report_handled = false;
+
+        switch ($action) {
+            case "ALWAYS_RECALC_HASH":
+                $file->calcSha2();
+                $file->setVerdict(RapidScanStorageRecord::NEWFILE);
+                $this->enqueueFile($i, $file);
+                $report_handled = true;
+                break;
+            case "RESCAN_SUSPICIOUS_FREQ":
+                if ($file->getVerdict() === RapidScanStorageRecord::RX_GOOD) {
+                    $this->rescan_rx_good_count++;
                 }
-                $this->scanner->AddResult($file, $i, $vars);
-                $this->db->put($file);
-                $this->rsAddStatsItem(false, $file);
-            } else {
-                $this->scanlist[$i] = $file;
-                $this->rsAddStatsItem(true, $file);
-            }
-        } elseif (
-            $rescan === self::RESCAN_NONE && AI_EXTRA_WARN
-            && $file->getVerdict() === RapidScanStorageRecord::RX_SUSPICIOUS
-        ) {
-            //these files were detected as rx suspicious before, let's report them
-            $sigId = $file->getSignature();
+            case "RESCAN_ALL":
+            case "RESCAN_SUSPICIOUS":
+            case "ALWAYS":
+            case "NO_SIG":
+                $this->enqueueFile($i, $file);
+                $report_handled = true;
+                break;
+            default:
+                $this->commitFile($file);
+                break;
+        }
 
-            if (isset($sigId) && isset($vars->signs->_Mnemo[$sigId])) {
-                $snippet = $file->getSnippet();
-                $vars->warningPHP[] = $i;
-                $vars->warningPHPFragment[] = $snippet;
-                $vars->warningPHPSig[] = $sigId;
-                $this->scanner->AddResult($file, $i, $vars);
-                $this->db->put($file);
-                $this->rsAddStatsItem(false, $file);
-            } else {
-                $this->scanlist[$i] = $file;
-                $this->rsAddStatsItem(true, $file);
+        if (!$report_handled) {
+            //add cached data from RAS db to report
+            foreach ($this->report_rules as $rule) {
+                if (in_array($file->getVerdict(), $rule['verdicts'])) {
+                    if (!isset($rule['condition']) || (is_callable($rule['condition']) && $rule['condition']($file, $vars))) {
+                        $this->processGenericReport($i, $file, $vars, $rule['data']);
+                        break;
+                    }
+                }
             }
-        } elseif (
-            $rescan === self::RESCAN_NONE
-            && $file->getVerdict() === RapidScanStorageRecord::RX_SUSPICIOUS_IGNORED
-        ) {
-            //these files were detected as rx suspicious_ignored before, let's report them
-            $sigId = $file->getSignature();
-
-            if (isset($sigId) && isset($vars->signs->_Mnemo[$sigId])) {
-                $snippet = $file->getSnippet();
-                $vars->suspiciousIgn[] = $i;
-                $vars->suspiciousIgnFragment[] = $snippet;
-                $vars->suspiciousIgnSig[] = $sigId;
-                $this->scanner->AddResult($file, $i, $vars);
-                $this->db->put($file);
-                $this->rsAddStatsItem(false, $file);
-            } else {
-                $this->scanlist[$i] = $file;
-                $this->rsAddStatsItem(true, $file);
-            }
-        } elseif (
-            $rescan === self::RESCAN_NONE
-            && $file->getVerdict() === RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED
-        ) {
-            //these files were detected as rx suspicious_extended before, let's report them
-            $vars->suspiciousExt[] = $i;
-            $vars->suspiciousExtSig[] = 'SMW-ESUS-' . $file->getSignature();
-            $vars->suspiciousExtFragment[] = $file->getSnippet();
-            $this->scanner->AddResult($file, $i, $vars);
-            $this->db->put($file);
-            $this->rsAddStatsItem(false, $file);
-        } elseif (
-            (
-                $rescan === self::RESCAN_ALL
-                && in_array($file->getVerdict(), [
-                    RapidScanStorageRecord::RX_SUSPICIOUS,
-                    RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED,
-                    RapidScanStorageRecord::RX_SUSPICIOUS_IGNORED,
-                    RapidScanStorageRecord::RX_GOOD,
-                    RapidScanStorageRecord::RX_MALWARE,
-                    RapidScanStorageRecord::HEURISTIC
-                ])
-            )
-            || (
-                $rescan === self::RESCAN_SUSPICIOUS
-                && in_array($file->getVerdict(), [
-                    RapidScanStorageRecord::RX_SUSPICIOUS,
-                    RapidScanStorageRecord::RX_SUSPICIOUS_IGNORED,
-                    RapidScanStorageRecord::HEURISTIC,
-                    RapidScanStorageRecord::BLACK,
-                    RapidScanStorageRecord::RX_MALWARE,
-                ])
-            )
-            || (
-                $this->freq !== false && $this->old_rescan_ts !== false
-                && $rescan === self::RESCAN_SUSPICIOUS
-                && in_array($file->getVerdict(), [
-                    RapidScanStorageRecord::RX_GOOD,
-                    RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED
-                ])
-                && $old_scanned <= $this->old_rescan_ts
-                && $rxgood_rescan = true
-            )
-        ) {
-            //rescan all mode, all none white/black/dual listed files need to be re-scanned fully
-            if ($rxgood_rescan) {
-                $this->rescan_rx_good_count++;
-            }
-            $this->scanlist[$i] = $file;
-            $this->rsAddStatsItem(true, $file);
-        } elseif (
-            defined('USE_HEURISTICS')
-            && $file->getVerdict() === RapidScanStorageRecord::HEURISTIC
-        ) { //mode === RESCAN_NONE
-            //these files were detected as HEURISTIC before, let's report them as malware
-            $snippet = $file->getSnippet();
-            $vars->criticalPHP[] = $i;
-            $vars->criticalPHPFragment[] = $snippet;
-            $vars->criticalPHPSig[] = 'SMW-HEUR-ELF';
-            $this->scanner->AddResult($file, $i, $vars);
-            $this->db->put($file);
-            $this->rsAddStatsItem(false, $file);
-        } elseif (
-            defined('USE_HEURISTICS_SUSPICIOUS')
-            && $file->getVerdict() === RapidScanStorageRecord::HEURISTIC
-        ) {
-            //these files were detected as HEURISTIC, let's report them as suspicious
-            $snippet = $file->getSnippet();
-            $vars->warningPHP[] = $i;
-            $vars->warningPHPFragment[] = $snippet;
-            $vars->warningPHPSig[] = 'SMW-HEUR-ELF';
-            $this->scanner->AddResult($file, $i, $vars);
-            $this->db->put($file);
-            $this->rsAddStatsItem(false, $file);
-        } elseif (
-            $file->getVerdict() === RapidScanStorageRecord::WHITE_EXTENDED
-            && $file->getUpdatedTs() <= $old_scanned
-        ) {
-            $this->scanlist[$i] = $file;
-        } elseif ($file->getVerdict() === RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED) {
-            //these files were detected as rx suspicious_extended before, let's report them
-            $vars->suspiciousExt[] = $i;
-            $vars->suspiciousExtSig[] = 'SMW-ESUS-' . $file->getSignature();
-            $vars->suspiciousExtFragment[] = $file->getSnippet();
-            $this->scanner->AddResult($file, $i, $vars);
-            $this->db->put($file);
-            $this->rsAddStatsItem(false, $file);
-        } else {
-            //in theory -- we should have only white files here...
-            $this->db->put($file);
-            $this->rsAddStatsItem(false, $file);
         }
 
         if (count($this->scanlist) >= self::MAX_TO_SCAN) {
@@ -30853,6 +30977,10 @@ class Deobfuscator
             $expected = (int)trim(MathCalc::calcRawString(' ' . $expected));
         }
 
+        if (empty($expected)) {
+            return $str;
+        }
+
         if (preg_match('~_0x\w+=function\(_0x\w+,_0x\w+\){_0x\w+=_0x\w+-\(?([^\);]+)\)?;~msi', $str, $delta)) {
             $delta = preg_replace_callback('~0x\w+~msi', function ($m) {
                 return Helpers::NormalizeInt($m[0]);
@@ -30896,6 +31024,9 @@ class Deobfuscator
             } catch (Exception $e) {
                 $item = array_shift($array);
                 $array[] = $item;
+            }
+            if ($i >= 100000) {
+                return $str;
             }
         }
 
