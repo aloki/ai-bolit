@@ -17,7 +17,7 @@ if (!defined('CLS_SCAN_CHECKERS')) {
 }
 
 if (!defined('MDS_VERSION')) {
-    define('MDS_VERSION', 'HOSTER-32.2.2');
+    define('MDS_VERSION', 'HOSTER-32.3.1');
 }
 
 $scan_signatures    = null;
@@ -4749,9 +4749,8 @@ class MDSMagentocoreConfig extends MDSCMSAddon
                 $dbConfig['db_prefix'] = $dbConfig['db_prefix'] ?? '';
                 return $dbConfig;
             }
-        } else {
-            return false;
         }
+        return false;
     }
 
     /**
@@ -4851,7 +4850,9 @@ class MDSMagentocoreConfig extends MDSCMSAddon
 
         foreach ($keys as $key => $value) {
             if (preg_match("/['\"]{$key}['\"]\s*=>\s*['\"]([^'\"]+)['\"]/", $dbBlock, $matches)) {
-                $credentials[$value] = trim($matches[1]);
+                if (isset($matches[1])) {
+                    $credentials[$value] = trim($matches[1]);
+                }
             }
         }
 
@@ -4859,7 +4860,7 @@ class MDSMagentocoreConfig extends MDSCMSAddon
             list($host, $port) = explode(':', $credentials['db_host']);
             $credentials['db_host'] = trim($host);
             $credentials['db_port'] = (int) trim($port);
-        } else {
+        } elseif (!empty($credentials['db_host'])) {
             $credentials['db_port'] = 3306; // Default MySQL port
         }
 
@@ -6549,7 +6550,7 @@ class LoadSignaturesForScan
             $len += strlen($s);
             //if it's first signature in array, then we don't need to recalculate backreferences
             $noСhange = $firstLine ?: ($len > $limit);
-            $s = preg_replace_callback('/(?<!\\\\)\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
+            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
                 if ($matches[1] <= $prefixGroupCount || $noСhange || $matches[1] > ($prefixGroupCount + $groupCount)) {
                     return $matches[0];
                 }
@@ -7102,6 +7103,7 @@ class AibolitHelpers
 {
     private static $euid = 0;
     private static $egids = [0];
+    private static $vulnerabilityIds;
 
     /**
      * Format bytes to human readable
@@ -7423,6 +7425,54 @@ class AibolitHelpers
     public static function isStringCoreDump($header)
     {
         return strlen($header) >= 17 && ord($header[16]) === 4;
+    }
+
+    /**
+     * @param FileInfo $file
+     * @param int $index
+     * @param Variables $vars
+     * @param Scanner|null $scanner
+     * @return void
+     */
+    public static function addVulnerableFile(FileInfo $file, int $index, Variables $vars, Scanner $scanner = null)
+    {
+        $vars->vulnerableFile[] = $index;
+        $vulnerability_ids_str = "VULN-ESUS-" . implode(',', self::getVulnerabilityIds());
+        $vars->vulnerableFileFragment[] = $vulnerability_ids_str;
+        $vars->vulnerableFileSig[] = $vulnerability_ids_str;
+
+        if ($scanner !== null) {
+            $scanner->AddResult($file, $index, $vars);
+        }
+    }
+
+    /**
+     * @param $ids
+     * @return void
+     */
+    public static function setVulnerabilityIds($ids)
+    {
+        self::$vulnerabilityIds = is_array($ids) ? implode(',', $ids) : (string)$ids;
+    }
+
+    /**
+     * @return false|string[]
+     */
+    public static function getVulnerabilityIds()
+    {
+        return explode(',', self::$vulnerabilityIds);
+    }
+
+    /**
+     * @param $l_SigId
+     * @return false|mixed|string
+     */
+    public static function removeId($l_SigId)
+    {
+        if (str_starts_with($l_SigId, 'id_VULN')) {
+            $l_SigId = substr($l_SigId, 3);
+        }
+        return $l_SigId;
     }
 }
 
@@ -10395,7 +10445,7 @@ class Helpers
     {
         preg_match_all("/'(.*?)'/msi", $string, $matches);
 
-        return (empty($matches)) ? [] : $matches[1];
+        return (!empty($matches[1])) ? $matches[1] : [];
     }
 
     /**
@@ -12801,7 +12851,6 @@ class Helpers
 
     public static function currentTime()
     {
-        /** @phpstan-ignore-next-line */
         return FUNC_HRTIME ? hrtime(true) / 1e9 : microtime(true);
     }
 }
@@ -26487,12 +26536,13 @@ class SignatureConverter
             . '|='
             . '|\(\?:php\|=\)\??'
             . '|\(\?:=\|php\)\??'
+            . '|\[ph\]\+'
         . ')?'
         . '(?:\\\s\+)?'
 
         . '(.*?)'
 
-        . '(?:\(\??:?\|?)?'
+        . '(?:\(\??:?\|?(?:\\\s\*)?)?'
         . '\\\\\?>'
         . '(?:\\\s\*)?'
         . '(?:\|?\\\Z\)?)?'

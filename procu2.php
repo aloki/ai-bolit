@@ -11,20 +11,37 @@ define('RED_COLOR', "\x1b\x5b\x31\x3b\x33\x31\x6d");
 define('GREEN_COLOR', "\x1b\x5b\x32\x3b\x33\x32\x6d");
 define('OFF_COLOR', "\x1b\x5b\x6d");
 
-define('REPORT_ERROR_FILE_CLEANEDUP', 0);
-define('REPORT_ERROR_FILE_TOO_BIG', 1);
-define('REPORT_ERROR_FILE_READING_ERROR', 2);
-define('REPORT_ERROR_FILE_NONE_WRITE', 3);
-define('REPORT_ERROR_FILE_NOT_CLEANEDUP', 4); // Use only with --forcibly_cleanup. If file was not changed after cleanup it have this type.
-define('REPORT_ERROR_FILE_NOT_EXISTS', 5); // Use only with --forcibly_cleanup. If file not exists.
-define('REPORT_ERROR_FILE_MATCHED_NOT_CLEANED', 6);
-
-define('REPORT_TYPE_OP_INJECTION_REMOVE', 0);
-define('REPORT_TYPE_OP_DEL_FILE_SIMPLE_MATCH', 1);
-define('REPORT_TYPE_OP_DEL_FILE_SIGNATURE', 2);
-define('REPORT_TYPE_OP_DEL_FILE_NORMALIZED_SIGNATURE', 3);
-define('REPORT_TYPE_OP_DEL_FILE_CLOUDHASH', 6);
-define('REPORT_TYPE_OP_DEL_FILE_ELF', 7);
+//`e` field in report (error)
+define('REPORT_ERROR_FILE_CLEANEDUP', 0);           // no errors, file was cleaned
+define('REPORT_ERROR_FILE_TOO_BIG', 1);             // file too big error, file was skipped because of size
+define('REPORT_ERROR_FILE_READING_ERROR', 2);       // can't read file error
+define('REPORT_ERROR_FILE_NONE_WRITE', 3);          // can't write to file error
+define('REPORT_ERROR_FILE_NOT_CLEANEDUP', 4);       // Use only with --forcibly_cleanup. If file was not changed after cleanup it have this type.
+define('REPORT_ERROR_FILE_NOT_EXISTS', 5);          // Use only with --forcibly_cleanup. If file not exists.
+define('REPORT_ERROR_FILE_MATCHED_NOT_CLEANED', 6); // our regexp in procu2 for detection matched,
+                                                    // but after cleanup we can't find part in original file
+                                                    // (because of normalization, deobfuscation or other issues) for replace
+/////////////////////////////////////////////////////
+// `d` field in report (type of deletion)
+define('REPORT_TYPE_OP_INJECTION_REMOVE', 0);               // injection removed `REPL`/`ODLN`/`RPDO` type of signatures
+define('REPORT_TYPE_OP_DEL_FILE_SIMPLE_MATCH', 1);          // remove or null whole file by injection signature `REPL`/`ODLN`/`RPDO` (if file empty after cleanup)
+define('REPORT_TYPE_OP_DEL_FILE_SIGNATURE', 2);             // remove or null whole file by -SA- `DELF` signature
+define('REPORT_TYPE_OP_DEL_FILE_NORMALIZED_SIGNATURE', 3);  // remove or null whole file by -SA- `ODFL` signature
+define('REPORT_TYPE_OP_DEL_FILE_CLOUDHASH', 6);             // remove or null whole file by CAS signature
+define('REPORT_TYPE_OP_DEL_FILE_ELF', 7);                   // remove whole file if it's ELF
+define('REPORT_TYPE_OP_PATCH_APPLIED', 10);                 // patched whole file
+/////////////////////////////////////////////////////
+/// `s` field in report - signature name
+/// `t` field in report - type of signature 0 - `REPL`, 4 - `ODLN`, 5 - `RPDO`, 1 - `DELF`, 3 - `ODFL`
+/// `r` field - rescan status,
+///     0 - after cleanup nothing found,
+///     1 - after cleanup malware still detected,
+///     2 - after cleanup malware still detected, but it's from advanced signatures list
+/// `mb` field - mtime before cleanup
+/// `ma` field - mtime after cleanup
+/// `hb` field - hash sha256 before cleanup
+/// `ha` field - hash sha256 after cleanup
+////////////////////////////////////////////////
 
 define('FUNC_HRTIME', function_exists('hrtime'));
 define('FUNC_ICONV', function_exists('iconv') && is_callable('iconv'));
@@ -44,6 +61,8 @@ $opts = new ProcuConfig();
 $cli = new ProcuCliParse($argv, $opts);
 $crontab = new Crontab(new OsReleaseInfo());
 ProcuOutput::setProgress($opts->get(ProcuConfig::PARAM_PROGRESS));
+
+$patch_mode = $opts->get(ProcuConfig::PARAM_PATCH_VULNERABILITIES);
 
 define('DEBUG_CA', $opts->get(ProcuConfig::PARAM_DEBUG_CA));
 define('CA_API_URL_DEBUG', $opts->get(ProcuConfig::PARAM_DEBUG_CA));
@@ -106,33 +125,43 @@ if (@$argv[1] === 'cli') {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-try {
+$load_db_signatures = null;
+$clean_db = [];
+$db_meta_info = [];
+$db_location = 'n/a';
+$signature_converter = null;
+$backup = null;
+$output = '';
+
+if (!$patch_mode) {
+    try {
         $load_db_signatures = new LoadSignaturesForClean(
             $opts->get(ProcuConfig::PARAM_SIGNATURE),
             $opts->get(ProcuConfig::PARAM_AVDB),
             ['full' => $full_signs,'mds' => false]
         );
-} catch (Exception $e) {
-    echo RED_COLOR . 'Bad state.' . OFF_COLOR . "\n";
-    echo $e->getMessage();
-    ProcuOutput::la_fin("\n\n");
-    die(1);
+        $clean_db               = $load_db_signatures->getDB();
+        $db_meta_info           = $load_db_signatures->getDBMetaInfo();
+        $db_location            = $load_db_signatures->getDBLocation();
+        $signature_converter    = new SignatureConverter($clean_db);
+
+        if (count($clean_db) < 1) {
+            ProcuOutput::la_fin("Error: Malware signature database is empty or invalid.\n", 1);
+            die(1);
+        }
+        $output = 'Loaded ' . count($clean_db) . ' malware rules' . "\n\n";
+    } catch (Exception $e) {
+        echo RED_COLOR . 'Bad state loading malware signatures.' . OFF_COLOR . "\n";
+        echo $e->getMessage();
+        ProcuOutput::la_fin("\n\n");
+        die(1);
+    }
+} else {
+    $output = "Patch mode enabled. Skipping malware signature loading.\n\n";
 }
-
-$clean_db               = $load_db_signatures->getDB();
-$db_meta_info           = $load_db_signatures->getDBMetaInfo();
-$db_location            = $load_db_signatures->getDBLocation();
-$signature_converter    = new SignatureConverter($clean_db);
-$backup = null;
-
-//////////////////////////////////////////////////
-
-if (count($clean_db) < 1) {
-    die(1);
-}
-
-echo 'Mode = ' . ($mode === 0 ? 'CHECK' : 'CLEAN') . "\n\n";
-echo 'Loaded ' . count($clean_db) . ' rules' . "\n\n";
+echo $output;
+unset($output);
+echo 'Mode = ' . ($patch_mode ? 'PATCH VULNERABILITIES' : ($mode === 0 ? 'CHECK' : 'CLEAN')) . "\n\n";
 
 if (!$opts->get(ProcuConfig::PARAM_TEST) && !$opts->get(ProcuConfig::PARAM_NOBACKUP)) {
     $backup = new ProcuBackup($opts->get(ProcuConfig::PARAM_BACKUP));
@@ -166,7 +195,8 @@ $report = new ProcuReport(
     $opts->get(ProcuConfig::PARAM_EXTENDED_REPORT),
     $opts->get(ProcuConfig::PARAM_CSV_RESULT),
     $opts->get(ProcuConfig::PARAM_EXTENDED_REPORT) ? ['db_location' => $db_location] : null,
-    $start_time
+    $start_time,
+    $opts->get(ProcuConfig::PARAM_REPORT_HASHES)
 );
 
 $fileIterator = ProcuInput::load(
@@ -196,36 +226,52 @@ foreach ($fileIterator as $item) {
     $file = $item;
     $filepath = $file->getFilepath();
 
-    $last_time = do_progress($last_time, $filepath, $total, $allfnum, $total_cleaned, 1); // CLEAN
+    $last_time = do_progress($last_time, $filepath, $total, $allfnum, $total_cleaned, 1); // CLEAN/PATCH stage
 
-    echo 'Checking ' . $filepath . ' [' . $total . '/' . $allfnum . "]\n";
     $result = [];
+    $res = false;
 
-    $rescan_func = static function ($file) use ($opts, $load_db_signatures, $debug) {
-        $rescan_res = null;
-        if ($opts->get(ProcuConfig::PARAM_RESCAN)) {
-            if ($file->getFileSize() <= $opts->get(ProcuConfig::PARAM_SIZE)) {
-                $rescan_res = ScanUnit::Rescan(
-                    $file->fileGetContents(),
-                    $load_db_signatures,
-                    $debug,
-                    $opts->get(ProcuConfig::PARAM_DEOBFUSCATE)
-                );
+    if ($patch_mode) {
+        echo 'Processing ' . $filepath . ' [' . $total . '/' . $allfnum . "]\n";
+        if ($file->isVulnerable() && $file->getPatchedHash()) {
+            $res = apply_patch($file, $opts, $result, $backup);
+        } else {
+            if ($file->isVulnerable()) {
+                ProcuOutput::addToOutput(GREEN_COLOR . " - Vulnerable, but no patch available via CAS." . OFF_COLOR . "\n");
             } else {
-                $rescan_res = 1;
+                ProcuOutput::addToOutput(GREEN_COLOR . " - Not identified as vulnerable or no patch needed." . OFF_COLOR . "\n");
             }
-            $file->close();
         }
-        return $rescan_res;
-    };
+        $rescan_res = null;
+    } else {
+        echo 'Checking ' . $filepath . ' [' . $total . '/' . $allfnum . "]\n";
+        $rescan_func = static function ($file) use ($opts, $load_db_signatures, $debug) {
+            $rescan_res = null;
+            if ($opts->get(ProcuConfig::PARAM_RESCAN)) {
+                if ($file->getFileSize() <= $opts->get(ProcuConfig::PARAM_SIZE)) {
+                    $rescan_res = ScanUnit::Rescan(
+                        $file->fileGetContents(),
+                        $load_db_signatures,
+                        $debug,
+                        $opts->get(ProcuConfig::PARAM_DEOBFUSCATE)
+                    );
+                } else {
+                    $rescan_res = 1;
+                }
+                $file->close();
+            }
+            return $rescan_res;
+        };
 
-    $res = clean_malware($file, $opts, $result, $load_db_signatures, $signature_converter, $backup);
-    $rescan_res = $rescan_func($file);
-    if ($rescan_res === 1 && $file->getCleanHash() && $file->getSha256() === $file->getCleanHash()) {
-        $file->setCleanHash(false);
         $res = clean_malware($file, $opts, $result, $load_db_signatures, $signature_converter, $backup);
         $rescan_res = $rescan_func($file);
+        if ($rescan_res === 1 && $file->getCleanHash() && $file->getSha256() === $file->getCleanHash()) {
+            $file->setCleanHash(false);
+            $res = clean_malware($file, $opts, $result, $load_db_signatures, $signature_converter, $backup);
+            $rescan_res = $rescan_func($file);
+        }
     }
+
     $report->addToReport($result, $rescan_res);
 
     if ($result) {
@@ -243,7 +289,7 @@ if ($reqCloudAV) {
     $reqCloudAV->close();
 }
 
-ProcuOutput::addToOutput('Processed: ' . $total . ' cleaned: ' . $total_cleaned . "\n\n");
+ProcuOutput::addToOutput('Processed: ' . $total . ' ' . ($patch_mode ? 'patched' : 'cleaned') . ': ' . $total_cleaned . "\n\n");
 
 if ($total_cleaned > 0) {
     ProcuOutput::addToOutput("Summary:\n");
@@ -279,17 +325,55 @@ ProcuOutput::la_fin('FIN', 0, $report);
 
 function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_signatures = null, $signature_converter = null, $backup = null)
 {
+    if ($opts->get(ProcuConfig::PARAM_PATCH_VULNERABILITIES)) {
+        return false;
+    }
+
     $src_file = $file->getFilepath();
     $file->collectStat();
     $file->getWritablePermissions();
     $file->open();
+    $is_crontab_file = ($file instanceof ProcuCronTabFile);
+    $file_exists = $file->fileExists();
+    $is_big = $file->getSize() > $opts->get(ProcuConfig::PARAM_SIZE);
+
+    $get_mtime = function (ProcuFileAbstract $file, $file_exists, $default_time = 0) use ($is_crontab_file) {
+        return (!$is_crontab_file && $file_exists) ? $file->getMTime() : $default_time;
+    };
+    $get_hash = function (ProcuFileAbstract $file, $file_exists) use ($is_big) {
+        return ($file_exists && !$is_big) ? $file->getSha256() : '';
+    };
+
+    $mtime_before = $get_mtime($file, $file_exists);
+    $hash_before = $get_hash($file, $file_exists);
+
+    $add_report_entry = function ($file, $e, $d = null, $s = '', $t = null) use ($opts, $get_mtime, $get_hash, $file_exists, $mtime_before, $hash_before) {
+        $entry = [];
+        $entry['f'] = $file->getFilepath();
+        $entry['e'] = $e;
+        if ($d !== null) {
+            $entry['d'] = $d;
+        }
+        $entry['s'] = $s;
+        if ($t !== null) {
+            $entry['t'] = $t;
+        }
+        if ($opts->get(ProcuConfig::PARAM_REPORT_HASHES)) {
+            $entry['ma'] = $get_mtime($file, $file_exists) ?: 0;
+            $entry['mb'] = $mtime_before ?: 0;
+            $entry['ha'] = $get_hash($file, $file_exists) ?: '';
+            $entry['hb'] = $hash_before ?: '';
+        }
+        return $entry;
+    };
 
     if ($file->isWhite()) {
-        $json_result[] = [
-            'f' => $src_file,
-            'e' => REPORT_ERROR_FILE_NOT_CLEANEDUP,
-            's' => 'not_cleanedup'
-        ];
+        $json_result[] = $add_report_entry(
+            $file,
+            REPORT_ERROR_FILE_NOT_CLEANEDUP,
+            null,
+            'not_cleanedup'
+        );
         $file->close();
         $file->restorePermissions();
         unset($file);
@@ -300,11 +384,13 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
         $opts->get(ProcuConfig::PARAM_FORCIBLY_CLEANUP)
         && (!$file->fileExists() || $file->isLink())
     ) {
-        $json_result[] = [
-            'f' => $src_file,
-            'e' => REPORT_ERROR_FILE_NOT_EXISTS,
-            's' => 'not_exists'
-        ];
+        $json_result[] = $add_report_entry(
+            $file,
+            REPORT_ERROR_FILE_NOT_EXISTS,
+            null,
+            'not_exists'
+        );
+
         $file->close();
         $file->restorePermissions();
         unset($file);
@@ -329,22 +415,23 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
 
             $is_changed = false;
             if (backup_and_rewrite($file, $backup, $opts, $new_content, $is_changed)) {
-                $json_result[] = [
-                    'f' => $src_file,
-                    'e' => REPORT_ERROR_FILE_CLEANEDUP,
-                    'd' => empty($new_content) ? REPORT_TYPE_OP_DEL_FILE_CLOUDHASH : REPORT_TYPE_OP_INJECTION_REMOVE,
-                    's' => $recId
-                ];
+                $json_result[] = $add_report_entry(
+                    $file,
+                    REPORT_ERROR_FILE_CLEANEDUP,
+                    empty($new_content) ? REPORT_TYPE_OP_DEL_FILE_CLOUDHASH : REPORT_TYPE_OP_INJECTION_REMOVE,
+                    $recId
+                );
                 $file->close();
                 $file->restorePermissions();
                 unset($file);
                 return true;
             } else {
-                $json_result[] = [
-                    'f' => $src_file,
-                    'e' => REPORT_ERROR_FILE_NONE_WRITE,
-                    's' => $recId
-                ];
+                $json_result[] = $add_report_entry(
+                    $file,
+                    REPORT_ERROR_FILE_NONE_WRITE,
+                    null,
+                    $recId
+                );
             }
             $file->close();
             $file->restorePermissions();
@@ -374,22 +461,23 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
             return true;
         }
         if (backup_and_remove($file, $backup, $opts)) {
-            $json_result[] = [
-                'f' => $src_file,
-                'e' => REPORT_ERROR_FILE_CLEANEDUP,
-                'd' => $file->isBlack() ? REPORT_TYPE_OP_DEL_FILE_CLOUDHASH : REPORT_TYPE_OP_DEL_FILE_ELF,
-                's' => $recId
-            ];
+            $json_result[] = $add_report_entry(
+                $file,
+                REPORT_ERROR_FILE_CLEANEDUP,
+                $file->isBlack() ? REPORT_TYPE_OP_DEL_FILE_CLOUDHASH : REPORT_TYPE_OP_DEL_FILE_ELF,
+                $recId
+            );
             $file->close();
             $file->restorePermissions();
             unset($file);
             return true;
         } else {
-            $json_result[] = [
-                'f' => $src_file,
-                'e' => REPORT_ERROR_FILE_NONE_WRITE,
-                's' => $recId
-            ];
+            $json_result[] = $add_report_entry(
+                $file,
+                REPORT_ERROR_FILE_NONE_WRITE,
+                null,
+                $recId
+            );
         }
         $file->close();
         $file->restorePermissions();
@@ -399,11 +487,10 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
 
     if ($file->getSize() > $opts->get(ProcuConfig::PARAM_SIZE)) {
         ProcuOutput::addToOutput($src_file . "\t" . RED_COLOR . "ERR READING\t" . OFF_COLOR . "\n");
-        $json_result[] = [
-            'f' => $src_file,
-            'e' => REPORT_ERROR_FILE_TOO_BIG,
-            's' => ''
-        ];
+        $json_result[] = $add_report_entry(
+            $file,
+            REPORT_ERROR_FILE_TOO_BIG
+        );
         $file->restorePermissions();
         $file->close();
         unset($file);
@@ -414,11 +501,10 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
 
     if ($file_content === false || empty($file_content)) {
         ProcuOutput::addToOutput($src_file . "\t" . RED_COLOR . "ERR READING\t" . OFF_COLOR . "\n");
-        $json_result[] = [
-            'f' => $src_file,
-            'e' => REPORT_ERROR_FILE_READING_ERROR,
-            's' => ''
-        ];
+        $json_result[] = $add_report_entry(
+            $file,
+            REPORT_ERROR_FILE_READING_ERROR
+        );
         $file->restorePermissions();
         $file->close();
         unset($file);
@@ -446,14 +532,13 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
                 ProcuOutput::addToOutput(GREEN_COLOR . $result['id'] . OFF_COLOR);
 
                 if (!$result['empty']) {
-                    $entry = [
-                        'f' => $src_file,
-                        'e' => ($is_changed ? REPORT_ERROR_FILE_CLEANEDUP : REPORT_ERROR_FILE_NONE_WRITE),
-                        'd' => REPORT_TYPE_OP_INJECTION_REMOVE,
-                        't' => $result['sig_type'],
-                        's' => $result['id'],
-                    ];
-                    $json_result[] = $entry;
+                    $json_result[] = $add_report_entry(
+                        $file,
+                        ($is_changed ? REPORT_ERROR_FILE_CLEANEDUP : REPORT_ERROR_FILE_NONE_WRITE),
+                        REPORT_TYPE_OP_INJECTION_REMOVE,
+                        $result['id'],
+                        $result['sig_type']
+                    );
                 } else {
                     $d = null;
                     switch ($result['sig_type']) {
@@ -474,13 +559,12 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
                     if ($result['sig_type'] == 0 || $result['sig_type'] == 4 || $result['sig_type'] == 5) {
                         ProcuOutput::addToOutput(' ' . GREEN_COLOR . "E RM\t" . OFF_COLOR);
                     }
-                    $entry = [
-                        'f' => $src_file,
-                        'e' => REPORT_ERROR_FILE_CLEANEDUP,
-                        'd' => $d,
-                        's' => $result['id']
-                    ];
-                    $json_result[] = $entry;
+                    $json_result[] = $add_report_entry(
+                        $file,
+                        REPORT_ERROR_FILE_CLEANEDUP,
+                        $d,
+                        $result['id']
+                    );
                 }
                 ProcuOutput::addToOutput("\n");
             }
@@ -489,20 +573,20 @@ function clean_malware(ProcuFileAbstract $file, $opts, &$json_result, $load_db_s
                 ? ' ----- ' . RED_COLOR . 'ERROR, CONTENT MATCHED, BUT NOT CLEANED' . OFF_COLOR
                 : ' ----- ' . RED_COLOR . 'ERROR, WRITE-PROTECTED' . OFF_COLOR);
             ProcuOutput::addToOutput(PHP_EOL);
-            $entry = [
-                'f' => $src_file,
-                'e' => $matched_not_cleaned ? REPORT_ERROR_FILE_MATCHED_NOT_CLEANED : REPORT_ERROR_FILE_NONE_WRITE,
-                's' => $clean_result[0]['id']
-            ];
-            $json_result[] = $entry;
+            $json_result[] = $add_report_entry(
+                $file,
+                $matched_not_cleaned ? REPORT_ERROR_FILE_MATCHED_NOT_CLEANED : REPORT_ERROR_FILE_NONE_WRITE,
+                null,
+                $clean_result[0]['id']
+            );
         }
     } elseif (!$clean_result && $opts->get(ProcuConfig::PARAM_FORCIBLY_CLEANUP)) {
-        $entry = [
-            'f' => $src_file,
-            'e' => REPORT_ERROR_FILE_NOT_CLEANEDUP,
-            's' => 'not_cleanedup'
-        ];
-        $json_result[] = $entry;
+        $json_result[] = $add_report_entry(
+            $file,
+            REPORT_ERROR_FILE_NOT_CLEANEDUP,
+            null,
+            'not_cleanedup'
+        );
     }
 
     $file->restorePermissions();
@@ -562,6 +646,93 @@ function backup_and_rewrite($file, $backup, $opts, $content, &$is_changed)
         return false;
     }
     return true;
+}
+
+/**
+ * @param ProcuFileAbstract $file
+ * @param $opts
+ * @param $json_result
+ * @param $backup
+ * @return bool
+ */
+function apply_patch(ProcuFileAbstract $file, $opts, &$json_result, $backup = null)
+{
+    $src_file = $file->getFilepath();
+    $patched_hash = $file->getPatchedHash();
+
+    $vuln_ids = $file->getVulnerabilityIds();
+    $file->collectStat();
+    $file->getWritablePermissions();
+    $file->open();
+
+    if (!$file->fileExists() || $file->isLink()) {
+        $json_result[] = [
+            'f' => $src_file,
+            'e' => REPORT_ERROR_FILE_NOT_EXISTS, // Reuse existing code
+            's' => 'patch_target_not_exists'
+        ];
+        $file->restorePermissions();
+        return false;
+    }
+
+    if ($patched_hash) {
+        $id_string = !empty($vuln_ids) ? implode(',', $vuln_ids) : 'UNKNOWN';
+        $recId = 'VULN-ESUS-' . $id_string;
+
+        if ($opts->get(ProcuConfig::PARAM_TEST)) { // Check if running in test mode
+            ProcuOutput::printFilename($src_file);
+            ProcuOutput::addToOutput(GREEN_COLOR . '[TEST] Would patch with hash: ' . $patched_hash . OFF_COLOR . "\n");
+            $file->close();
+            $file->restorePermissions();
+            return true;
+        }
+
+        $new_content = ProcuCloudClean::downloadFile($patched_hash);
+        if ($new_content !== false) {
+            ProcuOutput::printFilename($src_file);
+            ProcuOutput::addToOutput(GREEN_COLOR . 'Patching ' . $recId . OFF_COLOR . "\n");
+
+            $is_changed = false;
+
+            if (backup_and_rewrite($file, $backup, $opts, $new_content, $is_changed)) {
+                $json_result[] = [
+                    'f' => $src_file,
+                    'e' => REPORT_ERROR_FILE_CLEANEDUP,
+                    'd' => REPORT_TYPE_OP_PATCH_APPLIED,
+                    's' => $recId,
+                    'ph' => $patched_hash
+                ];
+                ProcuStat::addId($recId);
+                return true;
+            } else {
+                // Failed to write/backup
+                $json_result[] = [
+                    'f' => $src_file,
+                    'e' => REPORT_ERROR_FILE_NONE_WRITE,
+                    's' => 'patch_write_error::' . $recId
+                ];
+            }
+        } else {
+            $json_result[] = [
+                'f' => $src_file,
+                'e' => REPORT_ERROR_FILE_READING_ERROR,
+                's' => 'patch_download_error::' . $recId
+            ];
+            ProcuOutput::printFilename($src_file);
+            ProcuOutput::addToOutput(RED_COLOR . 'ERROR downloading patch content for ' . $recId . OFF_COLOR . "\n");
+        }
+    } else {
+        $id_string = !empty($vuln_ids) ? implode(',', $vuln_ids) : 'UNKNOWN';
+        $json_result[] = [
+            'f' => $src_file,
+            'e' => REPORT_ERROR_FILE_NOT_CLEANEDUP,
+            's' => 'patch_unavailable::' . $id_string
+        ];
+    }
+
+    $file->close();
+    $file->restorePermissions();
+    return false;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1998,12 +2169,13 @@ class SignatureConverter
             . '|='
             . '|\(\?:php\|=\)\??'
             . '|\(\?:=\|php\)\??'
+            . '|\[ph\]\+'
         . ')?'
         . '(?:\\\s\+)?'
 
         . '(.*?)'
 
-        . '(?:\(\??:?\|?)?'
+        . '(?:\(\??:?\|?(?:\\\s\*)?)?'
         . '\\\\\?>'
         . '(?:\\\s\*)?'
         . '(?:\|?\\\Z\)?)?'
@@ -2514,15 +2686,17 @@ class ProcuReport
     private $additional = null;
 
     private $start_time = null;
+    private $report_hashes = false;
 
 
-    public function __construct($json_name, $extended = false, $csv_name = null, $additional = null, $start_time = null)
+    public function __construct($json_name, $extended = false, $csv_name = null, $additional = null, $start_time = null, $report_hashes = false)
     {
         $this->json_name = $json_name;
         $this->csv_name = $csv_name;
         $this->extended = $extended;
         $this->additional = $additional;
         $this->start_time = $start_time;
+        $this->report_hashes = $report_hashes;
 
         if (($this->json_name && !$this->csv_name) || $this->extended) {
             $this->report = [];
@@ -2546,6 +2720,9 @@ class ProcuReport
         if (!$file_report) {
             return;
         }
+        if ($this->report_hashes) {
+            $row['r'] = -1; //make 'r' field static
+        }
         if (isset($rescan)) { //rescan correction
             foreach ($file_report as &$row) {
                 if ($row['e'] === REPORT_ERROR_FILE_NONE_WRITE && in_array($row['s'], ['cld', 'SMW-HEUR-ELF'], true)) {
@@ -2563,6 +2740,12 @@ class ProcuReport
                 $line = [$row['f'], $row['e'], $row['d'] ?? '', $row['s'], $row['t'] ?? ''];
                 if (isset($row['r'])) {
                     $line[] = $row['r'];
+                }
+                if ($this->report_hashes) {
+                    $line[] = $row['mb'];
+                    $line[] = $row['ma'];
+                    $line[] = $row['hb'];
+                    $line[] = $row['ha'];
                 }
                 fputcsv($this->csv, $line);
             }
@@ -2726,33 +2909,35 @@ class ProcuCliParse extends CliParse
      * @var array Project options for cli
      */
     protected $opts = [
-        ProcuConfig::PARAM_DEOBFUSCATE          => ['short' => 'd',  'long' => 'deobfuscate',               'needValue' => false],
-        ProcuConfig::PARAM_SOFT                 => ['short' => 's',  'long' => 'soft',                      'needValue' => false],
-        ProcuConfig::PARAM_NOBACKUP             => ['short' => 'n',  'long' => 'nobackup',                  'needValue' => false],
-        ProcuConfig::PARAM_TEST                 => ['short' => 't',  'long' => 'test',                      'needValue' => false],
-        ProcuConfig::PARAM_LIST                 => ['short' => 'l',  'long' => 'list',                      'needValue' => true],
-        ProcuConfig::PARAM_BACKUP               => ['short' => 'b',  'long' => 'backup',                    'needValue' => true],
-        ProcuConfig::PARAM_RESULT               => ['short' => 'r',  'long' => 'result',                    'needValue' => true],
-        ProcuConfig::PARAM_CSV_RESULT           => ['short' => '',   'long' => 'csv_result',                'needValue' => true],
-        ProcuConfig::PARAM_PROGRESS             => ['short' => 'p',  'long' => 'progress',                  'needValue' => true],
-        ProcuConfig::PARAM_LOG                  => ['short' => 'g',  'long' => 'log',                       'needValue' => true],
-        ProcuConfig::PARAM_AVDB                 => ['short' => 'c',  'long' => 'avdb',                      'needValue' => true],
-        ProcuConfig::PARAM_DECODE               => ['short' => '',   'long' => 'decode',                    'needValue' => true],
-        ProcuConfig::PARAM_JSON_LIST            => ['short' => 'j',  'long' => 'json_list',                 'needValue' => true],
-        ProcuConfig::PARAM_CSV_LIST             => ['short' => '',   'long' => 'csv_list',                  'needValue' => true],
-        ProcuConfig::PARAM_USERNAME             => ['short' => '',   'long' => 'username',                  'needValue' => true],
-        ProcuConfig::PARAM_EXTENDED_REPORT      => ['short' => 'e',  'long' => 'extended_report',           'needValue' => false],
-        ProcuConfig::PARAM_BLACKLIST            => ['short' => '',   'long' => 'black-list',                'needValue' => true],
-        ProcuConfig::PARAM_SIGNATURE            => ['short' => '',   'long' => 'signature',                 'needValue' => true],
-        ProcuConfig::PARAM_INPUT_FN_B64         => ['short' => '',   'long' => 'input-fn-b64-encoded',      'needValue' => false],
-        ProcuConfig::PARAM_FORCIBLY_CLEANUP     => ['short' => '',   'long' => 'forcibly_cleanup',          'needValue' => false],
-        ProcuConfig::PARAM_SIZE                 => ['short' => '',   'long' => 'size',                      'needValue' => true],
-        ProcuConfig::PARAM_RESCAN               => ['short' => '',   'long' => 'rescan',                    'needValue' => false],
-        ProcuConfig::PARAM_DONT_USE_UMASK       => ['short' => '',   'long' => 'do-not-use-umask',          'needValue' => false],
-        ProcuConfig::PARAM_STANDART_ONLY        => ['short' => '',   'long' => 'standard-only',             'needValue' => false],
-        ProcuConfig::PARAM_DISABLE_CLOUDAV      => ['short' => '',   'long' => 'disable-cloudav',           'needValue' => false],
-        ProcuConfig::PARAM_DEBUG_CA             => ['short' => '',   'long' => 'debug-ca',                  'needValue' => true],
-        ProcuConfig::PARAM_DISABLE_CAS          => ['short' => '',   'long' => 'disable-cloud-assist',      'needValue' => false],
+        ProcuConfig::PARAM_DEOBFUSCATE           => ['short' => 'd',  'long' => 'deobfuscate',               'needValue' => false],
+        ProcuConfig::PARAM_SOFT                  => ['short' => 's',  'long' => 'soft',                      'needValue' => false],
+        ProcuConfig::PARAM_NOBACKUP              => ['short' => 'n',  'long' => 'nobackup',                  'needValue' => false],
+        ProcuConfig::PARAM_TEST                  => ['short' => 't',  'long' => 'test',                      'needValue' => false],
+        ProcuConfig::PARAM_LIST                  => ['short' => 'l',  'long' => 'list',                      'needValue' => true],
+        ProcuConfig::PARAM_BACKUP                => ['short' => 'b',  'long' => 'backup',                    'needValue' => true],
+        ProcuConfig::PARAM_RESULT                => ['short' => 'r',  'long' => 'result',                    'needValue' => true],
+        ProcuConfig::PARAM_CSV_RESULT            => ['short' => '',   'long' => 'csv_result',                'needValue' => true],
+        ProcuConfig::PARAM_PROGRESS              => ['short' => 'p',  'long' => 'progress',                  'needValue' => true],
+        ProcuConfig::PARAM_LOG                   => ['short' => 'g',  'long' => 'log',                       'needValue' => true],
+        ProcuConfig::PARAM_AVDB                  => ['short' => 'c',  'long' => 'avdb',                      'needValue' => true],
+        ProcuConfig::PARAM_DECODE                => ['short' => '',   'long' => 'decode',                    'needValue' => true],
+        ProcuConfig::PARAM_JSON_LIST             => ['short' => 'j',  'long' => 'json_list',                 'needValue' => true],
+        ProcuConfig::PARAM_CSV_LIST              => ['short' => '',   'long' => 'csv_list',                  'needValue' => true],
+        ProcuConfig::PARAM_USERNAME              => ['short' => '',   'long' => 'username',                  'needValue' => true],
+        ProcuConfig::PARAM_EXTENDED_REPORT       => ['short' => 'e',  'long' => 'extended_report',           'needValue' => false],
+        ProcuConfig::PARAM_BLACKLIST             => ['short' => '',   'long' => 'black-list',                'needValue' => true],
+        ProcuConfig::PARAM_SIGNATURE             => ['short' => '',   'long' => 'signature',                 'needValue' => true],
+        ProcuConfig::PARAM_INPUT_FN_B64          => ['short' => '',   'long' => 'input-fn-b64-encoded',      'needValue' => false],
+        ProcuConfig::PARAM_FORCIBLY_CLEANUP      => ['short' => '',   'long' => 'forcibly_cleanup',          'needValue' => false],
+        ProcuConfig::PARAM_SIZE                  => ['short' => '',   'long' => 'size',                      'needValue' => true],
+        ProcuConfig::PARAM_RESCAN                => ['short' => '',   'long' => 'rescan',                    'needValue' => false],
+        ProcuConfig::PARAM_DONT_USE_UMASK        => ['short' => '',   'long' => 'do-not-use-umask',          'needValue' => false],
+        ProcuConfig::PARAM_STANDART_ONLY         => ['short' => '',   'long' => 'standard-only',             'needValue' => false],
+        ProcuConfig::PARAM_DISABLE_CLOUDAV       => ['short' => '',   'long' => 'disable-cloudav',           'needValue' => false],
+        ProcuConfig::PARAM_DEBUG_CA              => ['short' => '',   'long' => 'debug-ca',                  'needValue' => true],
+        ProcuConfig::PARAM_DISABLE_CAS           => ['short' => '',   'long' => 'disable-cloud-assist',      'needValue' => false],
+        ProcuConfig::PARAM_REPORT_HASHES         => ['short' => '',   'long' => 'report-hashes',             'needValue' => false],
+        ProcuConfig::PARAM_PATCH_VULNERABILITIES => ['short' => '',   'long' => 'patch-vulnerabilities',     'needValue' => false],
     ];
 
     /**
@@ -2783,67 +2968,71 @@ class ProcuCliParse extends CliParse
 
 class ProcuConfig extends Config
 {
-    const AI_DOUBLECHECK_FILE       = 'AI-BOLIT-DOUBLECHECK.php';
-    const PROCU_BACKUP_F_DIR        = 'backup_%%TIME%%';
-    const PARAM_DEOBFUSCATE         = 'deobfuscate';
-    const PARAM_SOFT                = 'soft';
-    const PARAM_NOBACKUP            = 'nobackup';
-    const PARAM_TEST                = 'test';
-    const PARAM_LIST                = 'list';
-    const PARAM_BACKUP              = 'backup';
-    const PARAM_RESULT              = 'result';
-    const PARAM_CSV_RESULT          = 'csv_result';
-    const PARAM_PROGRESS            = 'progress';
-    const PARAM_LOG                 = 'log';
-    const PARAM_AVDB                = 'avdb';
-    const PARAM_DECODE              = 'decode';
-    const PARAM_JSON_LIST           = 'json_list';
-    const PARAM_CSV_LIST            = 'csv_list';
-    const PARAM_USERNAME            = 'username';
-    const PARAM_EXTENDED_REPORT     = 'extended_report';
-    const PARAM_BLACKLIST           = 'black-list';
-    const PARAM_SIGNATURE           = 'signature';
-    const PARAM_INPUT_FN_B64        = 'input-fn-b64-encoded';
-    const PARAM_FORCIBLY_CLEANUP    = 'forcibly_cleanup';
-    const PARAM_SIZE                = 'size';
-    const PARAM_RESCAN              = 'rescan';
-    const PARAM_DONT_USE_UMASK      = 'do-not-use-umask';
-    const PARAM_STANDART_ONLY       = 'standard-only';
-    const PARAM_DISABLE_CLOUDAV     = 'disable-cloudav';
-    const PARAM_DEBUG_CA            = 'debug-ca';
-    const PARAM_DISABLE_CAS         = 'disable-cloud-assist';
+    const AI_DOUBLECHECK_FILE         = 'AI-BOLIT-DOUBLECHECK.php';
+    const PROCU_BACKUP_F_DIR          = 'backup_%%TIME%%';
+    const PARAM_DEOBFUSCATE           = 'deobfuscate';
+    const PARAM_SOFT                  = 'soft';
+    const PARAM_NOBACKUP              = 'nobackup';
+    const PARAM_TEST                  = 'test';
+    const PARAM_LIST                  = 'list';
+    const PARAM_BACKUP                = 'backup';
+    const PARAM_RESULT                = 'result';
+    const PARAM_CSV_RESULT            = 'csv_result';
+    const PARAM_PROGRESS              = 'progress';
+    const PARAM_LOG                   = 'log';
+    const PARAM_AVDB                  = 'avdb';
+    const PARAM_DECODE                = 'decode';
+    const PARAM_JSON_LIST             = 'json_list';
+    const PARAM_CSV_LIST              = 'csv_list';
+    const PARAM_USERNAME              = 'username';
+    const PARAM_EXTENDED_REPORT       = 'extended_report';
+    const PARAM_BLACKLIST             = 'black-list';
+    const PARAM_SIGNATURE             = 'signature';
+    const PARAM_INPUT_FN_B64          = 'input-fn-b64-encoded';
+    const PARAM_FORCIBLY_CLEANUP      = 'forcibly_cleanup';
+    const PARAM_SIZE                  = 'size';
+    const PARAM_RESCAN                = 'rescan';
+    const PARAM_DONT_USE_UMASK        = 'do-not-use-umask';
+    const PARAM_STANDART_ONLY         = 'standard-only';
+    const PARAM_DISABLE_CLOUDAV       = 'disable-cloudav';
+    const PARAM_DEBUG_CA              = 'debug-ca';
+    const PARAM_DISABLE_CAS           = 'disable-cloud-assist';
+    const PARAM_REPORT_HASHES         = 'report-hashes';
+    const PARAM_PATCH_VULNERABILITIES = 'patch-vulnerabilities';
 
     /**
      * @var array Default config
      */
     protected $defaultConfig = [
-        self::PARAM_DEOBFUSCATE         => false,
-        self::PARAM_SOFT                => false,
-        self::PARAM_NOBACKUP            => false,
-        self::PARAM_TEST                => false,
-        self::PARAM_LIST                => self::AI_DOUBLECHECK_FILE,
-        self::PARAM_BACKUP              => self::PROCU_BACKUP_F_DIR,
-        self::PARAM_RESULT              => 'procu_result_file.json',
-        self::PARAM_CSV_RESULT          => null,
-        self::PARAM_PROGRESS            => 'procu_progress_file.json',
-        self::PARAM_LOG                 => 'AI-PROCU_%%TIME%%.log',
-        self::PARAM_AVDB                => '',
-        self::PARAM_DECODE              => null,
-        self::PARAM_JSON_LIST           => null,
-        self::PARAM_CSV_LIST            => null,
-        self::PARAM_USERNAME            => null,
-        self::PARAM_EXTENDED_REPORT     => false,
-        self::PARAM_BLACKLIST           => null,
-        self::PARAM_SIGNATURE           => '',
-        self::PARAM_INPUT_FN_B64        => false,
-        self::PARAM_FORCIBLY_CLEANUP    => false,
-        self::PARAM_SIZE                => 15,  // max filesize in MB
-        self::PARAM_RESCAN              => false,
-        self::PARAM_DONT_USE_UMASK      => false,
-        self::PARAM_STANDART_ONLY       => false,
-        self::PARAM_DISABLE_CLOUDAV     => false,
-        self::PARAM_DEBUG_CA            => false,
-        self::PARAM_DISABLE_CAS         => false,
+        self::PARAM_DEOBFUSCATE           => false,
+        self::PARAM_SOFT                  => false,
+        self::PARAM_NOBACKUP              => false,
+        self::PARAM_TEST                  => false,
+        self::PARAM_LIST                  => self::AI_DOUBLECHECK_FILE,
+        self::PARAM_BACKUP                => self::PROCU_BACKUP_F_DIR,
+        self::PARAM_RESULT                => 'procu_result_file.json',
+        self::PARAM_CSV_RESULT            => null,
+        self::PARAM_PROGRESS              => 'procu_progress_file.json',
+        self::PARAM_LOG                   => 'AI-PROCU_%%TIME%%.log',
+        self::PARAM_AVDB                  => '',
+        self::PARAM_DECODE                => null,
+        self::PARAM_JSON_LIST             => null,
+        self::PARAM_CSV_LIST              => null,
+        self::PARAM_USERNAME              => null,
+        self::PARAM_EXTENDED_REPORT       => false,
+        self::PARAM_BLACKLIST             => null,
+        self::PARAM_SIGNATURE             => '',
+        self::PARAM_INPUT_FN_B64          => false,
+        self::PARAM_FORCIBLY_CLEANUP      => false,
+        self::PARAM_SIZE                  => 15,  // max filesize in MB
+        self::PARAM_RESCAN                => false,
+        self::PARAM_DONT_USE_UMASK        => false,
+        self::PARAM_STANDART_ONLY         => false,
+        self::PARAM_DISABLE_CLOUDAV       => false,
+        self::PARAM_DEBUG_CA              => false,
+        self::PARAM_DISABLE_CAS           => false,
+        self::PARAM_REPORT_HASHES         => false,
+        self::PARAM_PATCH_VULNERABILITIES => false,
     ];
 
     /**
@@ -2866,6 +3055,9 @@ abstract class ProcuFileAbstract
     protected $black = false;
     protected $white = false;
     protected $signature = null;
+    protected $vulnerable = false;
+    protected $patched_hash = false;
+    protected $vulnerability_ids = [];
 
     /**
      * @return bool
@@ -2915,6 +3107,57 @@ abstract class ProcuFileAbstract
         $this->signature = $signature;
     }
 
+    /**
+     * @return bool
+     */
+    public function isVulnerable(): bool
+    {
+        return $this->vulnerable;
+    }
+
+    /**
+     * @param bool $vulnerable
+     * @return void
+     */
+    public function setVulnerable(bool $vulnerable)
+    {
+        $this->vulnerable = $vulnerable;
+    }
+
+    /**
+     * @return bool|mixed
+     */
+    public function getPatchedHash()
+    {
+        return $this->patched_hash;
+    }
+
+    /**
+     * @param $hash
+     * @return void
+     */
+    public function setPatchedHash($hash)
+    {
+        $this->patched_hash = $hash;
+    }
+
+    /**
+     * @return array
+     */
+    public function getVulnerabilityIds(): array
+    {
+        return $this->vulnerability_ids;
+    }
+
+    /**
+     * @param array $ids
+     * @return void
+     */
+    public function setVulnerabilityIds(array $ids)
+    {
+        $this->vulnerability_ids = array_map('strval', $ids);
+    }
+
     public function __construct($filepath, $truncate)
     {
         $this->filepath = $filepath;
@@ -2938,7 +3181,7 @@ abstract class ProcuFileAbstract
 
     public function getSha256()
     {
-        return @hash_file('sha256', $this->filepath);
+        return @hash_file('sha256', $this->filepath) ?: '';
     }
 
     public function getCleanHash()
@@ -2949,6 +3192,12 @@ abstract class ProcuFileAbstract
     public function setCleanHash($hash)
     {
         $this->clean_hash = $hash;
+    }
+
+    public function getMTime()
+    {
+        clearstatcache(true, $this->filepath);
+        return @filemtime($this->filepath) ?: 0;
     }
 
     abstract public function collectStat();
@@ -3015,6 +3264,11 @@ class ProcuFile extends ProcuFileAbstract
     public function fileExists()
     {
         return file_exists($this->filepath);
+    }
+
+    public function isReadable()
+    {
+        return is_readable($this->filepath);
     }
 
     public function isLink()
@@ -3142,6 +3396,11 @@ class ProcuCronTabFile extends ProcuFileAbstract
         return @hash('sha256', $this->current_crontab_content);
     }
 
+    public function getMTime()
+    {
+        return 0;
+    }
+
     public function collectStat()
     {
         $this->current_crontab_content = $this->readCrontabContent();
@@ -3150,6 +3409,11 @@ class ProcuCronTabFile extends ProcuFileAbstract
     }
 
     public function fileExists()
+    {
+        return $this->crontab->isExists();
+    }
+
+    public function isReadable()
     {
         return $this->crontab->isExists();
     }
@@ -3434,7 +3698,6 @@ class ProcuCloudCleanRequest
 
         $json_hashes = json_encode($data);
 
-        $info = [];
         try {
             curl_setopt($this->curl_handle, CURLOPT_POSTFIELDS, $json_hashes);
             $response_data  = curl_exec($this->curl_handle);
@@ -3467,9 +3730,15 @@ class ProcuCloudCleanRequest
             throw new Exception('API server returned error!');
         }
         if (!isset($result['result'])) {
-            throw new Exception('API server returned error! Cannot find field "result".');
+            if (isset($result['patches'])) {
+                return ['result' => [], 'patches' => $result['patches']];
+            }
+            throw new Exception('API server returned error! Cannot find "result" field.');
         }
-        return $result['result'];
+        return [
+            'result' => $result['result'],
+            'patches' => $result['patches'] ?? []
+        ];
     }
 
     private function requestFile($hash, $retry = true)
@@ -3535,9 +3804,8 @@ class ProcuCloudClean
                 !$file->fileExists()
                 || $file->isLink()
                 || $file->isElf()
-                || $file->isBlack()
-                || $file->isWhite()
                 || $file instanceof ProcuCronTabFile
+                || (!$file->isVulnerable() && ($file->isBlack() || $file->isWhite()))
             ) {
                 yield $file;
             } else {
@@ -3565,13 +3833,17 @@ class ProcuCloudClean
     {
         if (!is_null(self::$reqCloud)) {
             try {
-                $cleans = self::$reqCloud->checkFilesByHash(array_keys(self::$files_queue));
+                $response = self::$reqCloud->checkFilesByHash(array_keys(self::$files_queue));
+                $cleans = $response['result'] ?? [];
+                $patches = $response['patches'] ?? [];
             } catch (\Exception $e) {
                 $cleans = [];
-                fwrite(STDERR, 'Warning: [ProcuCloud] ' . $e->getMessage() . PHP_EOL);
+                $patches = [];
+                fwrite(STDERR, 'Warning: [ProcuCloudClean] ' . $e->getMessage() . PHP_EOL);
             }
             self::processCleansList($cleans, self::$files_queue);
-            unset($cleans);
+            self::processPatchesList($patches, self::$files_queue);
+            unset($cleans, $patches, $response);
         }
         foreach (self::$files_queue as $files) {
             foreach ($files as $file) {
@@ -3591,7 +3863,12 @@ class ProcuCloudClean
         return $content;
     }
 
-    private static function processCleansList($cleans, $list_of_hash)
+    /**
+     * @param $cleans
+     * @param $list_of_hash
+     * @return void
+     */
+    private static function processCleansList($cleans, &$list_of_hash)
     {
         foreach ($cleans as $malicious_hash => $clean_hash) {
             if (!isset($list_of_hash[$malicious_hash])) {
@@ -3599,6 +3876,26 @@ class ProcuCloudClean
             }
             foreach ($list_of_hash[$malicious_hash] as &$entry) {
                 $entry->setCleanHash($clean_hash);
+            }
+            unset($entry);
+        }
+    }
+
+    /**
+     * @param $patches
+     * @param $list_of_hash
+     * @return void
+     */
+    private static function processPatchesList($patches, &$list_of_hash)
+    {
+        foreach ($patches as $vulnerable_hash => $patched_hash) {
+            if (!isset($list_of_hash[$vulnerable_hash])) {
+                continue;
+            }
+            foreach ($list_of_hash[$vulnerable_hash] as &$entry) {
+                if ($entry instanceof ProcuFileAbstract) {
+                    $entry->setPatchedHash($patched_hash);
+                }
             }
             unset($entry);
         }
@@ -3625,6 +3922,7 @@ class ProcuCloudAssistedScan
             if (
                 !$file->fileExists()
                 || $file->isLink()
+                || !$file->isReadable()
                 || $file instanceof ProcuCronTabFile
             ) {
                 yield $file;
@@ -3692,6 +3990,21 @@ class ProcuCloudAssistedScan
                 unset($file);
             }
         }
+
+        if (isset($scans['vulnerable'])) {
+            foreach ($scans['vulnerable'] as $vuln_index => $list_index) {
+                if (!isset($list_of_hash[$keys[$list_index]])) {
+                    continue;
+                }
+                foreach ($list_of_hash[$keys[$list_index]] as &$file) {
+                    $file->setVulnerable(true);
+                    if (isset($scans['vulnerable_vulnerability_ids'][$vuln_index]) && is_array($scans['vulnerable_vulnerability_ids'][$vuln_index])) {
+                        $file->setVulnerabilityIds($scans['vulnerable_vulnerability_ids'][$vuln_index]);
+                    }
+                }
+                unset($file);
+            }
+        }
     }
 }
 
@@ -3751,18 +4064,15 @@ class ProcuCloudAssistedScanRequest
     {
         if (empty($list_of_hashes)) {
             return [
-                [],
-                [],
-                [],
-                [],
-                [],
-                [],
-                'white'                 => [],
-                'white_extended'        => [],
-                'black'                 => [],
-                'verdicts_black'        => [],
-                'injection'             => [],
-                'verdicts_injection'    => [],
+                'white'                         => [],
+                'white_extended'                => [],
+                'black'                         => [],
+                'verdicts_black'                => [],
+                'injection'                     => [],
+                'verdicts_injection'            => [],
+                'vulnerable'                    => [],
+                'vulnerable_paths'              => [],
+                'vulnerable_vulnerability_ids'  => []
             ];
         }
 
@@ -3772,30 +4082,20 @@ class ProcuCloudAssistedScanRequest
 
         $result = $this->request($list_of_hashes);
 
-        $white              = $result['white'] ?? [];
-        $white_extended     = $result['white_extended'] ?? [];
-        $black              = $result['black'] ?? [];
-        $verdicts_black     = $result['verdicts_black'] ?? [];
-        $injection          = $result['injection'] ?? [];
-        $verdicts_injection = $result['verdicts_injection'] ?? [];
-
         return [
-            $white,
-            $white_extended,
-            $black,
-            $verdicts_black,
-            $injection,
-            $verdicts_injection,
-            'white'                 => $white,
-            'white_extended'        => $white_extended,
-            'black'                 => $black,
-            'verdicts_black'        => $verdicts_black,
-            'injection'             => $injection,
-            'verdicts_injection'    => $verdicts_injection,
+            'white'                         => $result['white'] ?? [],
+            'white_extended'                => $result['white_extended'] ?? [],
+            'black'                         => $result['black'] ?? [],
+            'verdicts_black'                => $result['verdicts_black'] ?? [],
+            'injection'                     => $result['injection'] ?? [],
+            'verdicts_injection'            => $result['verdicts_injection'] ?? [],
+            'vulnerable'                    => $result['vulnerable'] ?? [],
+            'vulnerable_paths'              => $result['vulnerable_paths'] ?? [],
+            'vulnerable_vulnerability_ids'  => $result['vulnerable_vulnerability_ids'] ?? [],
         ];
     }
 
-    // /////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
 
     private function request($list_of_hashes)
     {
@@ -5245,7 +5545,7 @@ class Helpers
     {
         preg_match_all("/'(.*?)'/msi", $string, $matches);
 
-        return (empty($matches)) ? [] : $matches[1];
+        return (!empty($matches[1])) ? $matches[1] : [];
     }
 
     /**
@@ -7651,7 +7951,6 @@ class Helpers
 
     public static function currentTime()
     {
-        /** @phpstan-ignore-next-line */
         return FUNC_HRTIME ? hrtime(true) / 1e9 : microtime(true);
     }
 }
@@ -20772,7 +21071,7 @@ class LoadSignaturesForScan
             $len += strlen($s);
             //if it's first signature in array, then we don't need to recalculate backreferences
             $noСhange = $firstLine ?: ($len > $limit);
-            $s = preg_replace_callback('/(?<!\\\\)\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
+            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
                 if ($matches[1] <= $prefixGroupCount || $noСhange || $matches[1] > ($prefixGroupCount + $groupCount)) {
                     return $matches[0];
                 }
@@ -21911,6 +22210,7 @@ class AibolitHelpers
 {
     private static $euid = 0;
     private static $egids = [0];
+    private static $vulnerabilityIds;
 
     /**
      * Format bytes to human readable
@@ -22232,6 +22532,54 @@ class AibolitHelpers
     public static function isStringCoreDump($header)
     {
         return strlen($header) >= 17 && ord($header[16]) === 4;
+    }
+
+    /**
+     * @param FileInfo $file
+     * @param int $index
+     * @param Variables $vars
+     * @param Scanner|null $scanner
+     * @return void
+     */
+    public static function addVulnerableFile(FileInfo $file, int $index, Variables $vars, Scanner $scanner = null)
+    {
+        $vars->vulnerableFile[] = $index;
+        $vulnerability_ids_str = "VULN-ESUS-" . implode(',', self::getVulnerabilityIds());
+        $vars->vulnerableFileFragment[] = $vulnerability_ids_str;
+        $vars->vulnerableFileSig[] = $vulnerability_ids_str;
+
+        if ($scanner !== null) {
+            $scanner->AddResult($file, $index, $vars);
+        }
+    }
+
+    /**
+     * @param $ids
+     * @return void
+     */
+    public static function setVulnerabilityIds($ids)
+    {
+        self::$vulnerabilityIds = is_array($ids) ? implode(',', $ids) : (string)$ids;
+    }
+
+    /**
+     * @return false|string[]
+     */
+    public static function getVulnerabilityIds()
+    {
+        return explode(',', self::$vulnerabilityIds);
+    }
+
+    /**
+     * @param $l_SigId
+     * @return false|mixed|string
+     */
+    public static function removeId($l_SigId)
+    {
+        if (str_starts_with($l_SigId, 'id_VULN')) {
+            $l_SigId = substr($l_SigId, 3);
+        }
+        return $l_SigId;
     }
 }
 

@@ -21,7 +21,7 @@
         "dms/phpunit-arraysubset-asserts": "*",
         "smi2/phpclickhouse": "*",
         "squizlabs/php_codesniffer": "^3.7",
-        "phpstan/phpstan": "^1.10"
+        "phpstan/phpstan": "^2"
     },
     "autoload":{
         "psr-4":{

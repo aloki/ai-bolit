@@ -1,7 +1,7 @@
 <?php
 
 ///////////////////////////////////////////////////////////////////////////
-// Version: 32.2.2
+// Version: 32.3.1
 // Copyright 2018-2025 CloudLinux Software Inc.
 ///////////////////////////////////////////////////////////////////////////
 
@@ -175,7 +175,7 @@ if (!(function_exists("file_put_contents") && is_callable("file_put_contents")))
     exit;
 }
 
-define('AI_VERSION', '32.2.2');
+define('AI_VERSION', '32.3.1');
 
 ////////////////////////////////////////////////////////////////////////////
 $g_SpecificExt = false;
@@ -1440,7 +1440,7 @@ function getStdin()
 function die2($str)
 {
     if (FUNC_AIBOLIT_ON_FATAL_ERROR) {
-        aibolit_onFatalError($str);
+        aibolit_onFatalError($str); // @phpstan-ignore-line
     }
     die($str);
 }
@@ -1483,6 +1483,7 @@ class AibolitHelpers
 {
     private static $euid = 0;
     private static $egids = [0];
+    private static $vulnerabilityIds;
 
     /**
      * Format bytes to human readable
@@ -1805,6 +1806,54 @@ class AibolitHelpers
     {
         return strlen($header) >= 17 && ord($header[16]) === 4;
     }
+
+    /**
+     * @param FileInfo $file
+     * @param int $index
+     * @param Variables $vars
+     * @param Scanner|null $scanner
+     * @return void
+     */
+    public static function addVulnerableFile(FileInfo $file, int $index, Variables $vars, Scanner $scanner = null)
+    {
+        $vars->vulnerableFile[] = $index;
+        $vulnerability_ids_str = "VULN-ESUS-" . implode(',', self::getVulnerabilityIds());
+        $vars->vulnerableFileFragment[] = $vulnerability_ids_str;
+        $vars->vulnerableFileSig[] = $vulnerability_ids_str;
+
+        if ($scanner !== null) {
+            $scanner->AddResult($file, $index, $vars);
+        }
+    }
+
+    /**
+     * @param $ids
+     * @return void
+     */
+    public static function setVulnerabilityIds($ids)
+    {
+        self::$vulnerabilityIds = is_array($ids) ? implode(',', $ids) : (string)$ids;
+    }
+
+    /**
+     * @return false|string[]
+     */
+    public static function getVulnerabilityIds()
+    {
+        return explode(',', self::$vulnerabilityIds);
+    }
+
+    /**
+     * @param $l_SigId
+     * @return false|mixed|string
+     */
+    public static function removeId($l_SigId)
+    {
+        if (str_starts_with($l_SigId, 'id_VULN')) {
+            $l_SigId = substr($l_SigId, 3);
+        }
+        return $l_SigId;
+    }
 }
 
 
@@ -1872,6 +1921,9 @@ class Variables
     public $suspiciousIgn       = [];
     public $suspiciousIgnSig    = [];
     public $suspiciousIgnFragment = [];
+    public $vulnerableFile       = [];
+    public $vulnerableFileFragment = [];
+    public $vulnerableFileSig    = [];
 
     public $counter             = 0;
     public $foundTotalDirs      = 0;
@@ -2415,7 +2467,7 @@ class LoadSignaturesForScan
             $len += strlen($s);
             //if it's first signature in array, then we don't need to recalculate backreferences
             $noСhange = $firstLine ?: ($len > $limit);
-            $s = preg_replace_callback('/(?<!\\\\)\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
+            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
                 if ($matches[1] <= $prefixGroupCount || $noСhange || $matches[1] > ($prefixGroupCount + $groupCount)) {
                     return $matches[0];
                 }
@@ -3212,18 +3264,15 @@ class CloudAssistedRequest
     {
         if (empty($list_of_hashes)) {
             return [
-                [],
-                [],
-                [],
-                [],
-                [],
-                [],
-                'white'                 => [],
-                'white_extended'        => [],
-                'black'                 => [],
-                'verdicts_black'        => [],
-                'injection'             => [],
-                'verdicts_injection'    => [],
+                'white'                         => [],
+                'white_extended'                => [],
+                'black'                         => [],
+                'verdicts_black'                => [],
+                'injection'                     => [],
+                'verdicts_injection'            => [],
+                'vulnerable'                    => [],
+                'vulnerable_paths'              => [],
+                'vulnerable_vulnerability_ids'  => []
             ];
         }
 
@@ -3233,26 +3282,16 @@ class CloudAssistedRequest
 
         $result = $this->request($list_of_hashes);
 
-        $white              = $result['white'] ?? [];
-        $white_extended     = $result['white_extended'] ?? [];
-        $black              = $result['black'] ?? [];
-        $verdicts_black     = $result['verdicts_black'] ?? [];
-        $injection          = $result['injection'] ?? [];
-        $verdicts_injection = $result['verdicts_injection'] ?? [];
-
         return [
-            $white,
-            $white_extended,
-            $black,
-            $verdicts_black,
-            $injection,
-            $verdicts_injection,
-            'white'                 => $white,
-            'white_extended'        => $white_extended,
-            'black'                 => $black,
-            'verdicts_black'        => $verdicts_black,
-            'injection'             => $injection,
-            'verdicts_injection'    => $verdicts_injection,
+            'white'                         => $result['white'] ?? [],
+            'white_extended'                => $result['white_extended'] ?? [],
+            'black'                         => $result['black'] ?? [],
+            'verdicts_black'                => $result['verdicts_black'] ?? [],
+            'injection'                     => $result['injection'] ?? [],
+            'verdicts_injection'            => $result['verdicts_injection'] ?? [],
+            'vulnerable'                    => $result['vulnerable'] ?? [],
+            'vulnerable_paths'              => $result['vulnerable_paths'] ?? [],
+            'vulnerable_vulnerability_ids'  => $result['vulnerable_vulnerability_ids'] ?? [],
         ];
     }
 
@@ -3743,7 +3782,7 @@ class JSONReport extends Report
         $summary_counters['symlinks']           = count($vars->symLinks);
         $summary_counters['big_files_skipped']  = count($vars->bigFiles);
         $summary_counters['suspicious']         = count($vars->warningPHP);
-        $summary_counters['suspicious_ext']     = count($vars->suspiciousExt);
+        $summary_counters['suspicious_ext']     = count($vars->suspiciousExt) + count($vars->vulnerableFile);
         $summary_counters['suspicious_ign']     = count($vars->suspiciousIgn);
 
         $this->raw_report['summary']['counters']    = $summary_counters;
@@ -3817,8 +3856,12 @@ class JSONReport extends Report
             $this->raw_report['cms'] = $this->getSimpleList($vars->CMS);
         }
 
-        if (count($vars->suspiciousExt) > 0) {
-            $this->raw_report['extended-suspicious'] = $this->getRawJson($vars->suspiciousExt, $vars, $vars->suspiciousExtFragment, $vars->suspiciousExtSig);
+        $merged_suspicious = array_merge($vars->suspiciousExt, $vars->vulnerableFile);
+        $merged_fragments  = array_merge($vars->suspiciousExtFragment, $vars->vulnerableFileFragment);
+        $merged_signatures = array_merge($vars->suspiciousExtSig, $vars->vulnerableFileSig);
+
+        if (count($merged_suspicious) > 0) {
+            $this->raw_report['extended-suspicious'] = $this->getRawJson($merged_suspicious, $vars, $merged_fragments, $merged_signatures);
         }
 
         if (count($vars->suspiciousIgn) > 0) {
@@ -3922,12 +3965,15 @@ class JSONReport extends Report
         ];
 
         for ($i = 0, $iMax = count($par_List); $i < $iMax; $i++) {
+            $sn = '';
             if ($par_SigId != null) {
                 if (is_array($par_SigId[$i])) {
                     $l_SigId = $black ? crc32($vars->structure['n'][$par_List[$i]]) : key($par_SigId[$i]);
                     $l_SigName = $black ? $par_SigId[$i][key($par_SigId[$i])] : $par_SigId[$i][$l_SigId];
                 } else {
                     $l_SigId = 'id_' . $par_SigId[$i];
+                    $l_SigId = AibolitHelpers::removeId($l_SigId);
+                    $sn = $l_SigId;
                 }
             } else {
                 $l_SigId = 'id_n' . rand(1000000, 9000000);
@@ -3967,7 +4013,7 @@ class JSONReport extends Report
             } elseif (isset($par_SigId) && !is_array($par_SigId[$i]) && isset($this->mnemo[$par_SigId[$i]])) {
                 $res['sn'] = $this->mnemo[$par_SigId[$i]];
             } else {
-                $res['sn'] = '';
+                $res['sn'] = $sn;
             }
             if ($this->stat) {
                 $res['uid']    = $vars->structure['u'][$l_Pos];
@@ -4221,7 +4267,6 @@ class CSVReport extends Report
     const SUSPICIOUS_EXT = 'es';
     const SUSPICIOUS_IGN = 'is';
     const PHISHING       = 'h';
-    const VULNERABLE     = 'v';
     const CLOUDHASH      = 'c';
 
     const BIG_FILES      = 'b';
@@ -4320,8 +4365,12 @@ class CSVReport extends Report
             $this->writeListCSV(self::CMS, $vars->CMS);
         }
 
-        if (count($vars->suspiciousExt) > 0) {
-            $this->writeRawCSV($vars->suspiciousExt, $vars, self::SUSPICIOUS_EXT, $vars->suspiciousExtFragment, $vars->suspiciousExtSig);
+        $merged_suspicious = array_merge($vars->suspiciousExt, $vars->vulnerableFile);
+        $merged_fragments  = array_merge($vars->suspiciousExtFragment, $vars->vulnerableFileFragment);
+        $merged_signatures = array_merge($vars->suspiciousExtSig, $vars->vulnerableFileSig);
+
+        if (count($merged_suspicious) > 0) {
+            $this->writeRawCSV($merged_suspicious, $vars, self::SUSPICIOUS_EXT, $merged_fragments, $merged_signatures);
         }
 
         if (count($vars->suspiciousIgn) > 0) {
@@ -4410,12 +4459,15 @@ class CSVReport extends Report
         for ($i = 0, $iMax = count($par_List); $i < $iMax; $i++) {
             $res = [];
             $res[] = $section;
+            $sn = '';
             if ($par_SigId != null) {
                 if (is_array($par_SigId[$i])) {
                     $l_SigId = $black ? crc32($vars->structure['n'][$par_List[$i]]) : key($par_SigId[$i]);
                     $l_SigName = $black ? $par_SigId[$i][key($par_SigId[$i])] : $par_SigId[$i][$l_SigId];
                 } else {
                     $l_SigId = 'id_' . $par_SigId[$i];
+                    $l_SigId = AibolitHelpers::removeId($l_SigId);
+                    $sn = $l_SigId;
                 }
             } else {
                 $l_SigId = 'id_n' . rand(1000000, 9000000);
@@ -4449,7 +4501,7 @@ class CSVReport extends Report
             } elseif (isset($par_SigId) && !is_array($par_SigId[$i]) && isset($this->mnemo[$par_SigId[$i]])) {
                 $res[] = $this->mnemo[$par_SigId[$i]];
             } else {
-                $res[] = '';
+                $res[] = $sn;
             }
 
             $res[] = ($black ? '' : ($vars->structure['sha256'][$l_Pos] ?? ''));
@@ -4541,8 +4593,11 @@ class DoublecheckReport extends Report
         if (!isset($vars->adwareList)) {
             $vars->adwareList = [];
         }
+        if (!isset($vars->vulnerableFile)) {
+            $vars->vulnerableFile = [];
+        }
 
-        $this->raw_report = array_merge($vars->criticalPHP, $vars->criticalJS, $vars->phishing, $vars->adwareList);
+        $this->raw_report = array_merge($vars->criticalPHP, $vars->criticalJS, $vars->phishing, $vars->adwareList, $vars->vulnerableFile);
         $this->raw_report = array_values(array_unique($this->raw_report));
 
         for ($i = 0, $iMax = count($this->raw_report); $i < $iMax; $i++) {
@@ -4985,6 +5040,9 @@ class CloudAssistedFiles
     private $white_extended = [];
     private $black = [];
     private $injection = [];
+    private $vulnerable = [];
+    private $vulnerablePaths = [];
+    private $vulnerableIds = [];
 
     /**
      * @param CloudAssistedRequest $car
@@ -5012,14 +5070,17 @@ class CloudAssistedFiles
             $vars->hashtable->add($list_of_filepath, $list_of_hash);
         }
         try {
-            list(
-                $white_raw,
-                $white_extended_raw,
-                $black_raw,
-                $verdicts_black_raw,
-                $injection_raw,
-                $verdicts_injection_raw
-            ) = $car->checkFilesByHash($list_of_hash);
+            $response = $car->checkFilesByHash($list_of_hash);
+            $white_raw              = $response['white'] ?? [];
+            $white_extended_raw     = $response['white_extended'] ?? [];
+            $black_raw              = $response['black'] ?? [];
+            $verdicts_black_raw     = $response['verdicts_black'] ?? [];
+            $injection_raw          = $response['injection'] ?? [];
+            $verdicts_injection_raw = $response['verdicts_injection'] ?? [];
+            $vulnerable_raw         = $response['vulnerable'] ?? [];
+            $vulnerable_paths_raw   = $response['vulnerable_paths'] ?? [];
+            $vulnerable_ids_raw     = $response['vulnerable_vulnerability_ids'] ?? [];
+            unset($response);
         } catch (Exception $e) {
             throw $e;
         }
@@ -5028,6 +5089,9 @@ class CloudAssistedFiles
         $this->white_extended = $this->getListOfFile($white_extended_raw, $list_of_hash, $file_list, $list_of_filepath);
         $this->black = $this->getListOfFile($black_raw, $list_of_hash, $file_list, $list_of_filepath, $verdicts_black_raw);
         $this->injection = $this->getListOfFile($injection_raw, $list_of_hash, $file_list, $list_of_filepath, $verdicts_injection_raw);
+        $this->vulnerable = $this->getListOfFile($vulnerable_raw, $list_of_hash, $file_list, $list_of_filepath, $vulnerable_ids_raw, true);
+        $this->vulnerablePaths = $vulnerable_paths_raw;
+        $this->vulnerableIds = $vulnerable_ids_raw;
 
         unset(
             $white_raw,
@@ -5036,9 +5100,12 @@ class CloudAssistedFiles
             $verdicts_black_raw,
             $injection_raw,
             $verdicts_injection_raw,
+            $vulnerable_raw,
+            $vulnerable_paths_raw,
+            $vulnerable_ids_raw,
             $list_of_hash,
             $list_of_filepath,
-            $file_list
+            $file_list,
         );
     }
 
@@ -5061,9 +5128,24 @@ class CloudAssistedFiles
         return $this->injection;
     }
 
+    public function getVulnerableList()
+    {
+        return $this->vulnerable;
+    }
+
+    public function getVulnerablePaths()
+    {
+        return $this->vulnerablePaths;
+    }
+
+    public function getVulnerableIds()
+    {
+        return $this->vulnerableIds;
+    }
+
     // =========================================================================
 
-    private function getListOfFile($data_raw, $list_of_hash, $file_list, $list_of_filepath, $verdicts = [])
+    private function getListOfFile($data_raw, $list_of_hash, $file_list, $list_of_filepath, $verdicts = [], $vuln = false)
     {
         $result = [];
         foreach ($data_raw as $index => $hash_index) {
@@ -5078,7 +5160,11 @@ class CloudAssistedFiles
                 if (!isset($verdicts[$index])) {
                     throw new Exception('Wrong CloudAssisted format. List of verdicts has structure different from main list.');
                 }
-                $hash_result['sn'] = $verdicts[$index];
+                if ($vuln) {
+                    $hash_result['vuln_ids'] = $verdicts[$index];
+                } else {
+                    $hash_result['sn'] = $verdicts[$index];
+                }
             }
             $result[$list_of_filepath[$hash_index]] = $hash_result;
         }
@@ -5544,6 +5630,20 @@ class ResidentMode
         $this->resident_dir = $dir;
     }
 
+    /**
+     * @param int $pid
+     * @param int $signal
+     *
+     * @return bool
+     */
+    protected function posix_kill($pid, $signal)
+    {
+        if (function_exists('posix_kill')) {
+            return posix_kill($pid, $signal);
+        }
+        return false;
+    }
+
     protected function writeReport($vars, $scan_time, $type, $file)
     {
         $file = AibolitHelpers::getBaseName($file);
@@ -5555,6 +5655,10 @@ class ResidentMode
             || ($critJS > 0)
             || ($black > 0)
             || ($warning > 0);
+        $suspicious = ($warning > 0)
+            && ($critPHP == 0)
+            && ($critJS == 0)
+            && ($black == 0);
         if ($malware) {
             $this->debugLog("Job {$file}: Found malware. PHP: {$critPHP}; JS: {$critJS}; Black: {$black}; SUS: {$warning}");
         } else {
@@ -5562,12 +5666,15 @@ class ResidentMode
         }
         if ($type == 'upload') {
             $pid = (int)AibolitHelpers::getBaseName($file, '.upload_job');
-            if ($malware) {
-                $this->debugLog("Job {$file}: Sending SIGUSR1 to {$pid}");
-                posix_kill($pid, SIGUSR1);
+            if ($suspicious) {
+                $this->debugLog("Job {$file}: Sending SIGTERM to {$pid} for suspicious detection");
+                $this->posix_kill($pid, SIGTERM);
+            } elseif ($malware) {
+                $this->debugLog("Job {$file}: Sending SIGUSR1 to {$pid} for malware detection");
+                $this->posix_kill($pid, SIGUSR1);
             } else {
-                $this->debugLog("Job {$file}: Sending SIGUSR2 to {$pid}");
-                posix_kill($pid, SIGUSR2);
+                $this->debugLog("Job {$file}: No issues detected, sending SIGUSR2 to {$pid}");
+                $this->posix_kill($pid, SIGUSR2);
             }
         } elseif ($type == 'notify' && $malware) {
             $filename = AibolitHelpers::getBaseName($file, '.notify_job');
@@ -7288,7 +7395,6 @@ class FileFilter
     private $generated              = false;
     private $size_range             = [];
     private $uid_range              = [];
-
     private $ignored_av_admin                   = null;
     private $ignored_av_admin_file_exists       = null;
     private $ignored_av_internal                = null;
@@ -7745,7 +7851,7 @@ class FileFilter
         $this->file_checkers[] = $this->check_size_range;
         $this->file_checkers[] = $this->check_ext;
         $this->file_checkers[] = $this->ignore_dots;
-        $this->dir_checkers[] = $this->ignore_dots;
+        $this->dir_checkers[]  = $this->ignore_dots;
     }
 
     public function setIgnoreListFile($filepath)
@@ -8144,6 +8250,7 @@ class Scanner
         $white_files = [];
         $white_extended_files = [];
         $injection_files = [];
+        $vulnerable_files = [];
         $cas_time = 0;
         try {
             $cas_start_time       = AibolitHelpers::currentTime();
@@ -8153,6 +8260,8 @@ class Scanner
             $white_extended_files = $cloud_assist_files->getWhiteExtendedList();
             $black_files          = $cloud_assist_files->getBlackList();
             $injection_files      = $cloud_assist_files->getInjectionList();
+            $vulnerable_files     = $cloud_assist_files->getVulnerableList();
+            $vulnerable_paths     = $cloud_assist_files->getVulnerablePaths();
             unset($cloud_assist_files);
         } catch (\Exception $e) {
             fwrite(STDERR, 'Warning: [CAS] ' . $e->getMessage() . PHP_EOL);
@@ -8176,6 +8285,7 @@ class Scanner
             $this->caAddStatsItem('dual_use', $prop['fi']);
         }
 
+        // --- Handle Blacklisted and Injected Files ---
         foreach ([$black_files, $injection_files] as $files) {
             foreach ($files as $filepath => $file_stat) {
                 if (isset($white_files[$filepath]) || isset($white_extended_files[$filepath])) {
@@ -8187,16 +8297,43 @@ class Scanner
             }
         }
 
-        $res = @array_diff_key($files_list, $black_files, $injection_files, $white_files, $white_extended_files);
-        foreach ($res as $file) {
-            $this->caAddStatsItem(true, $file);
+        $index = 0;
+        foreach ($vulnerable_files as $filepath => $file_stat) {
+            $vulnerable = false;
+            if (isset($vulnerable_paths[$index])) {
+                $_path = $vulnerable_paths[$index];
+                foreach ($_path as $allowedPath) {
+                    if (fnmatch('*' . $allowedPath, $file_stat['fi']->getFilename())) {
+                        $vulnerable = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($vulnerable) {
+                AibolitHelpers::setVulnerabilityIds($file_stat['vuln_ids']);
+                AibolitHelpers::addVulnerableFile($file_stat['fi'], $file_stat['fi']->getIndex(), $this->vars, $this);
+                $this->caAddStatsItem('vulnerable', $file_stat['fi']);
+            }
+            $index++;
         }
+
+        // --- Determine Files to Scan ---
+        // Files to scan are those *NOT* in any of the lists (white, white_extended, black, injection, vulnerable)
+        $files_to_scan = @array_diff_key($files_list, $black_files, $injection_files, $white_files, $white_extended_files, $vulnerable_files);
+
+
+        foreach ($files_to_scan as $file) {
+            $this->caAddStatsItem(true, $file);  // Unknown filesQCR_Debug
+        }
+
         ResidentStats::setWhiteCount(count($white_files));
         ResidentStats::setWhiteExtendedCount(count($white_extended_files));
         ResidentStats::setBlackCount(count($black_files));
         ResidentStats::setInjectionCount(count($injection_files));
         ResidentStats::addCasTime($cas_time);
-        return $res;
+
+        return $files_to_scan;
     }
 
     public function QCR_ScanDirectories($l_RootDir)
@@ -8249,6 +8386,7 @@ class Scanner
         if ($this->debug->isDebug()) {
             $this->debug->QCR_Debug('QCR_GoScan ');
         }
+
         try {
             $i = 0;
             $filesForCloudAssistedScan = [];
@@ -8269,8 +8407,9 @@ class Scanner
                 return;
             }
 
-            $scan_bufer_files = function ($files_list) use ($callback, $ca) {
+            $scan_buffer_files = function ($files_list) use ($callback, $ca) {
                 $this->vars->hashtable = new HashTable();
+
                 $files_to_scan = $this->CloudAssitedFilter($ca, $files_list);
                 $this->vars->files_and_ignored += count($files_list) - count($files_to_scan);
                 foreach ($files_to_scan as $file) {
@@ -8315,15 +8454,14 @@ class Scanner
                 // collecting files to scan with Cloud Assistant
                 $filesForCloudAssistedScan[$file->getFilename()] = $file;
                 if (count($filesForCloudAssistedScan) >= CLOUD_ASSIST_LIMIT) {
-                    $scan_bufer_files($filesForCloudAssistedScan);
+                    $scan_buffer_files($filesForCloudAssistedScan);
                     $filesForCloudAssistedScan = [];
                 }
             }
 
             if (count($filesForCloudAssistedScan)) {
-                $scan_bufer_files($filesForCloudAssistedScan);
+                $scan_buffer_files($filesForCloudAssistedScan);
             }
-
             unset($filesForCloudAssistedScan);
         } catch (Exception $e) {
             if ($this->debug->isDebug()) {
@@ -8470,7 +8608,7 @@ class Scanner
                     if ($this->debug->getDebugPerformance()) {
                         $this->debug->addFile($l_Filename, AibolitHelpers::currentTime() - $l_TSStartScan);
                     }
-                    unset($l_Unwrapped);
+                    unset($l_Unwrapped); // @phpstan-ignore-line
                     unset($l_Content);
                     return $return;
                 }
@@ -13389,7 +13527,7 @@ class RapidScanStorageRecord extends FileInfo
     const NEWFILE                = 0;  // this is a new file (or content changed)
     const RX_MALWARE             = 7;  // detected as malware by rx scan
     const RX_SUSPICIOUS          = 8;  // detected as suspicious by rx scan
-    const RX_SUSPICIOUS_EXTENDED = 13;  //detected as suspicious_extended by rx scan
+    const RX_SUSPICIOUS_EXTENDED = 13;  //detected as suspicious_extended by rx scan or has vulnerability ID
     const RX_SUSPICIOUS_IGNORED  = 14;  //detected as suspicious_ignored by whitelisted hash
     const RX_GOOD                = 9;  // detected as good by rx scan
     const RX_SKIPPED_SMART       = 10; // skipped by smart scan
@@ -14494,8 +14632,7 @@ class RapidAccountScan
     }
 
     /**
-     * given a batch do cloudscan
-     * @throws \Exception
+     * @return void
      */
     private function doCloudScan()
     {
@@ -14523,16 +14660,22 @@ class RapidAccountScan
         $injection_raw          = [];
         $verdicts_injection_raw = [];
         $white_extended_raw     = [];
+        $vulnerable_raw         = [];
+        $vulnerable_paths_raw   = [];
+        $vulnerable_ids_raw     = [];
 
         try {
-            list(
-                $white_raw,
-                $white_extended_raw,
-                $black_raw,
-                $verdicts_black_raw,
-                $injection_raw,
-                $verdicts_injection_raw
-            ) = $this->ca->checkFilesByHash($sha_list);
+            $response = $this->ca->checkFilesByHash($sha_list);
+            $white_raw              = $response['white'] ?? [];
+            $white_extended_raw     = $response['white_extended'] ?? [];
+            $black_raw              = $response['black'] ?? [];
+            $verdicts_black_raw     = $response['verdicts_black'] ?? [];
+            $injection_raw          = $response['injection'] ?? [];
+            $verdicts_injection_raw = $response['verdicts_injection'] ?? [];
+            $vulnerable_raw         = $response['vulnerable'] ?? [];
+            $vulnerable_paths_raw   = $response['vulnerable_paths'] ?? [];
+            $vulnerable_ids_raw     = $response['vulnerable_vulnerability_ids'] ?? [];
+            unset($response);
         } catch (\Exception $e) {
             fwrite(STDERR, 'Warning: [CAS] ' . $e->getMessage() . PHP_EOL);
             $this->str_error = $e->getMessage();
@@ -14551,6 +14694,7 @@ class RapidAccountScan
             $this->scanlist[$index_table[$index]]->setVerdict(RapidScanStorageRecord::WHITE_EXTENDED);
             $this->caAddStatsItem('white_extended', $this->scanlist[$index_table[$index]]);
         }
+
         $signatures_db = [];
         foreach ($black_raw as $i => $index) {
             $this->scanlist[$index_table[$index]]->setVerdict(RapidScanStorageRecord::BLACK);
@@ -14581,6 +14725,37 @@ class RapidAccountScan
             $this->caAddStatsItem('injection', $this->scanlist[$index_table[$index]]);
         }
 
+        foreach ($vulnerable_raw as $i => $index) {
+            $fileinfo = $this->scanlist[$index_table[$index]];
+            $filename = $fileinfo->getFilename();
+            $vulnerable = false;
+
+            if (isset($vulnerable_paths_raw[$i])) {
+                foreach ($vulnerable_paths_raw[$i] as $allowedPath) {
+                    if (fnmatch('*' . $allowedPath, $filename)) {
+                        $vulnerable = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($vulnerable) {
+                $fileinfo->setVerdict(RapidScanStorageRecord::RX_SUSPICIOUS_EXTENDED);
+                $ids = $vulnerable_ids_raw[$i] ?? [];
+                AibolitHelpers::setVulnerabilityIds($ids);
+                $signature = 'VULN-ESUS-' . implode(',', $ids);
+                $fileinfo->setSignature($signature);
+                $vulnerable_files[$fileinfo->getFilename()] = [
+                    'ts'        => time(),
+                    'fi'        => $fileinfo,
+                    'sn'        => $signature,
+                    'vuln_ids' => $vulnerable_ids_raw[$i]
+                ];
+                $this->caAddStatsItem('vulnerable', $fileinfo);
+                AibolitHelpers::addVulnerableFile($fileinfo, $fileinfo->getIndex(), $this->vars,$this->scanner);
+            }
+        }
+
         $signatures_list = $this->cas_db->getList();
         foreach ($signatures_db as $hash => $sig) {
             $this->cas_list[$hash] = $sig;
@@ -14590,23 +14765,20 @@ class RapidAccountScan
             $signatures_list[$hash] = $sig;
         }
         $this->cas_db->putList($signatures_list);
-
         foreach ($dual as $index) {
             $this->scanlist[$index_table[$index]]->setVerdict(RapidScanStorageRecord::DUAL_USE);
             $this->scanlist[$index_table[$index]]->setSignature('DUAL'); //later on we will get sig info from cloud
             $this->caAddStatsItem('dual_use', $this->scanlist[$index_table[$index]]);
         }
-
         // we can now update verdicts in batch for those that we know
         //add entries to report, when needed
-
         foreach ($blackfiles as $filepath => $file_stat) {
             $this->vars->blackFiles[] = $file_stat['fi']->getIndex();
             $this->vars->blackFilesSig[] = [$file_stat['ras_sigid'] => $file_stat['sn'] ?? 'cld'];
             $this->scanner->AddResult($file_stat['fi'], $file_stat['fi']->getIndex(), $this->vars);
         }
 
-        unset($white_raw, $black_raw, $injection_raw, $dual, $sha_list, $index_table);
+        unset($white_raw, $black_raw, $injection_raw, $vulnerable_raw, $dual, $sha_list, $index_table);
     }
 
     /**
@@ -15912,7 +16084,7 @@ class Helpers
     {
         preg_match_all("/'(.*?)'/msi", $string, $matches);
 
-        return (empty($matches)) ? [] : $matches[1];
+        return (!empty($matches[1])) ? $matches[1] : [];
     }
 
     /**
@@ -18318,7 +18490,6 @@ class Helpers
 
     public static function currentTime()
     {
-        /** @phpstan-ignore-next-line */
         return FUNC_HRTIME ? hrtime(true) / 1e9 : microtime(true);
     }
 }
