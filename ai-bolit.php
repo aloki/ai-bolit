@@ -1,7 +1,7 @@
 <?php
 
 ///////////////////////////////////////////////////////////////////////////
-// Version: 32.4.1
+// Version: 32.5.1
 // Copyright 2018-2025 CloudLinux Software Inc.
 ///////////////////////////////////////////////////////////////////////////
 
@@ -135,7 +135,8 @@ $defaults = [
     'hyperscan'                  => false,
     'archive-max-size'           => 20 * 1024 * 1024,
     'max-num-files-in-archive'   => 100,
-    'archive-max-folders-count'  => 1000
+    'archive-max-folders-count'  => 1000,
+    'detect-admin-tools'         => false,
 ];
 
 parseConfigFile(I360_CONFIG, $defaults);
@@ -174,7 +175,7 @@ if (!(function_exists("file_put_contents") && is_callable("file_put_contents")))
     exit;
 }
 
-define('AI_VERSION', '32.4.1');
+define('AI_VERSION', '32.5.1');
 
 ////////////////////////////////////////////////////////////////////////////
 $g_SpecificExt = false;
@@ -324,6 +325,7 @@ if (isCli()) {
         'hs-ext-sus:',
         'do-not-use-umask',
         'debug-ca:',
+        'detect-admin-tools',
     ];
 
 
@@ -801,6 +803,7 @@ HELP;
     }
 
     $defaults['use_template_in_path'] = isset($options['use-template-in-path']);
+    $defaults['detect-admin-tools'] = isset($options['detect-admin-tools']);
 
     if (isset($options['noprefix']) && !empty($options['noprefix']) && ($g_NoPrefix = $options['noprefix']) !== false) {
     } else {
@@ -1134,15 +1137,20 @@ $reportFactory = function ($reports) use (
     $max_size_to_scan,
     $g_SpecificExt,
     $use_doublecheck,
-    $debug
+    $debug,
+    $defaults
 ) {
+    $sanitize_signatures = !$defaults['detect-admin-tools'];
     foreach ($reports as $report_class => $file) {
-        yield Factory::instance()->create($report_class, [$vars->signs->_Mnemo, $path,
+        yield Factory::instance()->create($report_class, [
+            $vars->signs->_Mnemo, $path,
             $vars->signs->getDBLocation(), $vars->signs->getDBMetaInfoVersion(),
             $report_mask, $extended_report, $rapid_account_scan_report, AI_VERSION,
             AI_EXTRA_WARN, AI_EXPERT, SMART_SCAN, ROOT_PATH, SCAN_ALL_FILES, $g_SpecificExt,
             DOUBLECHECK_FILE, $use_doublecheck, START_TIME, $snum, $max_size_to_scan, $g_AddPrefix, $g_NoPrefix,
-            isset($reports[CSVReport::class]), $file, JSON_STDOUT, isset($vars->options['stat']), $debug]);
+            isset($reports[CSVReport::class]), $file, JSON_STDOUT, isset($vars->options['stat']), $debug,
+            $sanitize_signatures
+        ]);
     }
 };
 
@@ -3684,6 +3692,7 @@ class JSONReport extends Report
     private $echo;
     private $stat;
     private $debug;
+    private $sanitize_signatures = false;
 
     /** @phpstan-ignore-next-line */
     public function __construct(
@@ -3712,7 +3721,8 @@ class JSONReport extends Report
         $file = false,
         $echo = false,
         $stat = false,
-        $debug = null
+        $debug = null,
+        $sanitize_signatures = false
     ) {
         $this->mnemo                = $mnemo;
         $this->ai_extra_warn        = $ai_extra_warn;
@@ -3725,6 +3735,7 @@ class JSONReport extends Report
         $this->echo                 = $echo;
         $this->stat                 = $stat;
         $this->debug                = $debug;
+        $this->sanitize_signatures  = $sanitize_signatures;
 
         $this->raw_report = [];
         $this->raw_report['summary'] = [
@@ -3745,6 +3756,7 @@ class JSONReport extends Report
 
     public function generateReport($vars, $scan_time)
     {
+        $this->moveSanitizedToExtSuspicious($vars);
         $tmp = clone $vars;
         if (!$this->small) {
             $tmp->criticalPHP   = array_slice($tmp->criticalPHP, 0, self::MAX_ROWS);
@@ -4068,6 +4080,50 @@ class JSONReport extends Report
         if ($this->extended_report) {
             $this->raw_report['summary']['AT_CLKTCK'] = $tick;
         }
+    }
+
+    private function moveSanitizedToExtSuspicious(&$vars)
+    {
+        if (!$this->sanitize_signatures) {
+            return;
+        }
+        $moveToExtSuspicious = function (&$srcArr, &$srcFragment, &$srcSig, &$vars) {
+            $toMove = [];
+            $targetArr = 'suspiciousExt';
+            $targetFragment = 'suspiciousExtFragment';
+            $targetSig = 'suspiciousExtSig';
+            foreach ($srcArr as $i => $idx) {
+                $sig = isset($srcSig[$i]) ? $srcSig[$i] : (isset($this->mnemo[$idx]) ? $this->mnemo[$idx] : null);
+                if ($this->shouldSanitizeSignature($sig)) {
+                    $sanitized = $this->sanitizeSignatureName($sig);
+                    if ($sanitized !== $sig) {
+                        $vars->$targetArr[] = $idx;
+                        if (isset($srcFragment[$i])) $vars->$targetFragment[] = $srcFragment[$i];
+                        $vars->$targetSig[] = $sanitized;
+                        $toMove[] = $i;
+                    }
+                }
+            }
+            foreach (array_reverse($toMove) as $i) {
+                array_splice($srcArr, $i, 1);
+                if (isset($srcFragment[$i])) array_splice($srcFragment, $i, 1);
+                if (isset($srcSig[$i])) array_splice($srcSig, $i, 1);
+            }
+        };
+        $moveToExtSuspicious($vars->criticalPHP, $vars->criticalPHPFragment, $vars->criticalPHPSig, $vars);
+        $moveToExtSuspicious($vars->criticalJS, $vars->criticalJSFragment, $vars->criticalJSSig, $vars);
+        $moveToExtSuspicious($vars->warningPHP, $vars->warningPHPFragment, $vars->warningPHPSig, $vars);
+    }
+
+    private function shouldSanitizeSignature($sig)
+    {
+        // Only sanitize if enabled, $sig is a string, and contains 'admin.tool'
+        return $this->sanitize_signatures && is_string($sig) && strpos($sig, 'admin.tool') !== false;
+    }
+
+    private function sanitizeSignatureName($sig)
+    {
+            return preg_replace('/-(BLKH-SA|BLKH|INJ|SA)-/', '-ESUS-', $sig);
     }
 }
 

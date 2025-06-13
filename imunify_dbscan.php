@@ -17,7 +17,7 @@ if (!defined('CLS_SCAN_CHECKERS')) {
 }
 
 if (!defined('MDS_VERSION')) {
-    define('MDS_VERSION', 'HOSTER-32.4.1');
+    define('MDS_VERSION', 'HOSTER-32.5.1');
 }
 
 $scan_signatures    = null;
@@ -768,6 +768,8 @@ class MDSConfig extends Config
     const PARAM_DO_NOT_USE_UMASK    = 'do-not-use-umask';
     const PARAM_MEMORY_LIMIT        = 'memory';
     const PARAM_SIZE_LIMIT          = 'size';
+    const PARAM_BACKUP_TTL          = 'backupTTL';
+    const PARAM_SQLITE_DB_PATH      = 'sqliteDbPath';
 
     /**
      * @var array Default config
@@ -825,6 +827,8 @@ class MDSConfig extends Config
         self::PARAM_MEMORY_LIMIT        => '1G',
         self::PARAM_SIZE_LIMIT          => '650K',
         self::PARAM_PROGRESS_STDOUT     => false,
+        self::PARAM_BACKUP_TTL          => 2592000, // Default 1 month (30 * 24 * 60 * 60 seconds)
+        self::PARAM_SQLITE_DB_PATH      => '/var/imunify360/cleanup_storage/mds_backup.sqlite3',
     ];
 
     /**
@@ -832,7 +836,11 @@ class MDSConfig extends Config
      */
     public function __construct()
     {
-        $this->setDefaultConfig($this->defaultConfig);
+        if (empty($this->config)) {
+            $this->setDefaultConfig($this->defaultConfig);
+        } else {
+            $this->config = array_merge($this->defaultConfig, $this->config);
+        }
     }
 }
 
@@ -1063,6 +1071,7 @@ class MDSCliParse extends CliParse
         MDSConfig::PARAM_DO_NOT_USE_UMASK       => ['short' => '',  'long' => 'do-not-use-umask',       'needValue' => false],
         MDSConfig::PARAM_MEMORY_LIMIT           => ['short' => '',  'long' => 'memory',                 'needValue' => true],
         MDSConfig::PARAM_SIZE_LIMIT             => ['short' => '',  'long' => 'size',                   'needValue' => true],
+        MDSConfig::PARAM_BACKUP_TTL             => ['short' => '',  'long' => 'backup-ttl',             'needValue' => true],
     ];
 
     /**
