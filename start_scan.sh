@@ -6,3 +6,4 @@ if [ -z "$1" ]; then
 fi
 
 php -d extension=posix ai-bolit-hoster.php --report=ai-bolit.html --smart --deobfuscate --with-suspicious --cloud-assist=AUTO --avdb=sigs/aibolit/ai-bolit-hoster-full.db --use-heuristics-ignore "$1"
+chmod 644 "$1/ai-bolit.html" 2>/dev/null

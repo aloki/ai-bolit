@@ -17,7 +17,7 @@ if (!defined('CLS_SCAN_CHECKERS')) {
 }
 
 if (!defined('MDS_VERSION')) {
-    define('MDS_VERSION', 'HOSTER-32.3.1');
+    define('MDS_VERSION', 'HOSTER-32.4.1');
 }
 
 $scan_signatures    = null;
@@ -8962,7 +8962,7 @@ class Encoding
 
     public static function iconvSupported()
     {
-        return FUNC_ICONV;
+        return (defined('FUNC_ICONV')) ? FUNC_ICONV : (function_exists('iconv') && is_callable('iconv'));
     }
 
     public static function convertToCp1251($from, $str)
@@ -9058,9 +9058,18 @@ class Encoding
     }
 
 
-    public static function convertToUTF8($from, $str)
+    public static function convertToUTF8($from, $str, &$result = false)
     {
-        return @iconv($from, 'UTF-8//IGNORE', $str);
+        if (self::iconvSupported()) {
+            $converted_content = @iconv($from, 'UTF-8//IGNORE', $str);
+            if ($converted_content === false) {
+                $result = false;
+                return $str;
+            }
+            $result = true;
+            $str = $converted_content;
+        }
+        return $str;
     }
 
     public static function convertFromUTF8($to, $str)
@@ -25916,7 +25925,7 @@ class CleanUnit
                         if (!empty($normal_fnd)) {
                             $pos = Normalization::string_pos($file_content, $normal_fnd);
                             if ($pos !== false) {
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $norm_fnd);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $norm_fnd, $file_content);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, false, false);
                                 if ($l_UnicodeContent) {
@@ -25928,7 +25937,7 @@ class CleanUnit
                         if (!empty($unescaped_normal_fnd)) {
                             $pos = Normalization::string_pos($file_content, $unescaped_normal_fnd, true);
                             if ($pos !== false) {
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_norm_fnd);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_norm_fnd, $file_content);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, true);
                                 if ($l_UnicodeContent) {
@@ -25941,7 +25950,7 @@ class CleanUnit
                             $pos = Normalization::string_pos($file_content, $un_fnd, true);
                             if ($pos !== false) {
                                 $matched_not_cleaned = false;
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_fnd);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_fnd, $file_content);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, true);
                                 if ($l_UnicodeContent) {
@@ -26221,12 +26230,18 @@ class CleanUnit
         return $result;
     }
 
-    private static function getReplaceFromRegExp($replace, $matches)
+    private static function getReplaceFromRegExp($replace, $matches, $file_content = "")
     {
         if (!empty($replace)) {
             if (preg_match('~\$(\d+)~smi', $replace)) {
-                $replace = preg_replace_callback('~\$(\d+)~smi', function ($m) use ($matches) {
-                    return isset($matches[(int)$m[1]]) ? $matches[(int)$m[1]][0] : '';
+                $replace = preg_replace_callback('~\$(\d+)~smi', function ($m) use ($matches, $file_content) {
+                    $pos = isset($matches[(int)$m[1]]) ? Normalization::string_pos($file_content, $matches[(int)$m[1]][0]) : false;
+                    if ($pos) {
+                        $str = substr($file_content, $pos[0], $pos[1] - $pos[0] + 1);
+                    } else {
+                        $str = isset($matches[(int)$m[1]]) ? $matches[(int)$m[1]][0] : '';
+                    }
+                    return $str;
                 }, $replace);
             }
         }

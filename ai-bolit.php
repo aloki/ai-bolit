@@ -1,7 +1,7 @@
 <?php
 
 ///////////////////////////////////////////////////////////////////////////
-// Version: 32.3.1
+// Version: 32.4.1
 // Copyright 2018-2025 CloudLinux Software Inc.
 ///////////////////////////////////////////////////////////////////////////
 
@@ -14,7 +14,6 @@ define('FUNC_JSON_ENCODE', function_exists('json_encode'));
 define('FUNC_MEMORY_USAGE', function_exists('memory_get_usage'));
 define('FUNC_MEMORY_PEAK_USAGE', function_exists('memory_get_peak_usage'));
 
-define('CLS_DECISION_MAKING_STATS', true);
 define('CLS_PERFORMANCE_STATS', true);
 define('CLS_PROC_STATS', true);
 define('CLS_PROGRESS', true);
@@ -175,7 +174,7 @@ if (!(function_exists("file_put_contents") && is_callable("file_put_contents")))
     exit;
 }
 
-define('AI_VERSION', '32.3.1');
+define('AI_VERSION', '32.4.1');
 
 ////////////////////////////////////////////////////////////////////////////
 $g_SpecificExt = false;
@@ -333,6 +332,16 @@ if (isCli()) {
     $reports = [];
 
     $options = getopt(implode('', array_keys($cli_options)), $cli_longopts);
+
+    $collectDecisionStats = false;
+    if (
+        (isset($options['json_report']) && !empty($options['json_report'])) ||
+        (isset($options['o']) && !empty($options['o'])) ||
+        isset($options['detached'])
+    ) {
+        $collectDecisionStats = true;
+    }
+    define('CLS_DECISION_MAKING_STATS', $collectDecisionStats);
 
     if (isset($options['v']) || isset($options['version'])) {
         echo "\n";
@@ -11760,9 +11769,6 @@ class ZipFileInfo extends FileInfo
 }
 
 
-if (!defined('CLS_DECISION_MAKING_STATS')) {
-    define('CLS_DECISION_MAKING_STATS', true);
-}
 /**
  * Class to accumulate decision-making stats
  */
@@ -13344,7 +13350,7 @@ class Encoding
 
     public static function iconvSupported()
     {
-        return FUNC_ICONV;
+        return (defined('FUNC_ICONV')) ? FUNC_ICONV : (function_exists('iconv') && is_callable('iconv'));
     }
 
     public static function convertToCp1251($from, $str)
@@ -13440,9 +13446,18 @@ class Encoding
     }
 
 
-    public static function convertToUTF8($from, $str)
+    public static function convertToUTF8($from, $str, &$result = false)
     {
-        return @iconv($from, 'UTF-8//IGNORE', $str);
+        if (self::iconvSupported()) {
+            $converted_content = @iconv($from, 'UTF-8//IGNORE', $str);
+            if ($converted_content === false) {
+                $result = false;
+                return $str;
+            }
+            $result = true;
+            $str = $converted_content;
+        }
+        return $str;
     }
 
     public static function convertFromUTF8($to, $str)
