@@ -1,146 +1,146 @@
 {
     "items": [
         {
-            "md5sum": "7b0fac83cb4807145b464f96339b26e3",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "08aa9fb70e038bfe062526498ad5944f",
+            "modified": "2025-06-13T00:43:28+00:00",
             "name": "aibolit/AIBOLIT-WHITELIST.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/AIBOLIT-WHITELIST.db"
         },
         {
             "md5sum": "d85fec32d0932183ebc3467ffdae553a",
-            "modified": "2025-04-14T08:45:44+00:00",
+            "modified": "2025-05-21T07:35:03+00:00",
             "name": "aibolit/whitelistUrls.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/whitelistUrls.db"
         },
         {
-            "md5sum": "d3b7f4c1510b98923de599063387563b",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "da76a4f729bffc0b2613f551157e5e2c",
+            "modified": "2025-06-13T00:43:28+00:00",
             "name": "aibolit/hyperscan/hs_js.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_js.db"
         },
         {
-            "md5sum": "1f77401e4578336a0c3707268304ecb8",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "75b45261214ac7eb747d3783f37551d8",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/hyperscan/version.txt",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/version.txt"
         },
         {
-            "md5sum": "ffcafc11c79a296fce1339c741f3648d",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "6de24e753b478fa21f5eedfde7328435",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/hyperscan/hs_sus.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_sus.db"
         },
         {
-            "md5sum": "4f66ce3e868bcf081c6e732e37f9c36f",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "4ddb900446f87de8452a109cb04075c0",
+            "modified": "2025-06-13T00:43:28+00:00",
             "name": "aibolit/hyperscan/hs_cron.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_cron.db"
         },
         {
-            "md5sum": "de7171b9f556c4bf07639a5631ac17e9",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "ae87eec6249530e0078ce80720fe68de",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/hyperscan/hs_susext.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_susext.db"
         },
         {
-            "md5sum": "2fe201870a9a87344f21c3a02e9bb993",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "ea5fc4c7beb4f16e051fb882f777906e",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/hyperscan/hs_php.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/hyperscan/hs_php.db"
         },
         {
-            "md5sum": "5a8b1e3208c30ffeaf88cea38e618e59",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "6fb83abf90403ad53495df3be09a9f08",
+            "modified": "2025-06-13T00:43:28+00:00",
             "name": "aibolit/ai-bolit-hoster.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/ai-bolit-hoster.db"
         },
         {
-            "md5sum": "eeec201ce1d4f425c2da42b585f4baac",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "1bce4a439d16e9dab4c4897d4da9dd53",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/mds-ai-bolit-hoster.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/mds-ai-bolit-hoster.db"
         },
         {
-            "md5sum": "de9c7790fe32307a3c89fb2a94d06c4a",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "5bfdd249b2ca98080ea87717f1afa54b",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/mds-procu2.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/mds-procu2.db"
         },
         {
-            "md5sum": "4439e6e17304be7114879b89d2596b63",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "35d2f4b14e7d3ead4e4405a0059d5948",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/patchman.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/patchman.db"
         },
         {
-            "md5sum": "e1eabab348401c347b6b6eee857ae073",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "368a90432d159d0c0b4b9777e697d901",
+            "modified": "2025-06-13T00:43:28+00:00",
             "name": "aibolit/ai-bolit-hoster-full.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/ai-bolit-hoster-full.db"
         },
         {
-            "md5sum": "0a4e65bb0a96812dab0abdca8061d839",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "d85edbf2d763b3fb247afaad55700d95",
+            "modified": "2025-06-13T00:43:28+00:00",
             "name": "aibolit/ai-bolit.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/ai-bolit.db"
         },
         {
-            "md5sum": "4a81ebee90621bb9bc28e758ef4f1553",
-            "modified": "2025-05-05T21:03:52+00:00",
+            "md5sum": "2d9b3a0992212135c5ab8e96dd7b30b9",
+            "modified": "2025-06-11T21:47:57+00:00",
             "name": "aibolit/blacklistedUrls.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/blacklistedUrls.db"
         },
         {
-            "md5sum": "a6e288e5ddffad9631509e1799981e92",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "84d47892bdb647d4df821e0d27206f99",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/patchman_map.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/patchman_map.db"
         },
         {
-            "md5sum": "cd088fcbb773616e14b26e8cc29f6d7a",
-            "modified": "2025-05-07T18:13:06+00:00",
+            "md5sum": "deb2647c28f2a88de9f9e34e6e53ec3f",
+            "modified": "2025-06-13T00:43:29+00:00",
             "name": "aibolit/procu2.db",
             "url": "https://files.imunify360.com/static/sigs/v1/aibolit/procu2.db"
         },
         {
             "md5sum": "37b10f06234ab35e60a311db66a9a316",
-            "modified": "2025-04-14T08:29:37+00:00",
+            "modified": "2025-05-21T07:07:42+00:00",
             "name": "heuristic/main.yara",
             "url": "https://files.imunify360.com/static/sigs/v1/heuristic/main.yara"
         },
         {
             "md5sum": "8d0231a12edcdf58645a4c9ce638435a",
-            "modified": "2025-04-14T08:29:37+00:00",
+            "modified": "2025-05-21T07:07:42+00:00",
             "name": "i360/false.ign2",
             "url": "https://files.imunify360.com/static/sigs/v1/i360/false.ign2"
         },
         {
             "md5sum": "9f65cb887f67e5f2ea2457e750129316",
-            "modified": "2025-04-14T08:29:37+00:00",
+            "modified": "2025-05-21T07:07:42+00:00",
             "name": "i360/i360.chdb",
             "url": "https://files.imunify360.com/static/sigs/v1/i360/i360.chdb"
         },
         {
             "md5sum": "1f09b84c7a6cc59b1d77dfaa7462e0d4",
-            "modified": "2025-04-14T08:29:37+00:00",
+            "modified": "2025-05-21T07:07:42+00:00",
             "name": "i360/false.fp",
             "url": "https://files.imunify360.com/static/sigs/v1/i360/false.fp"
         },
         {
             "md5sum": "aa56f8d1b231dd1ee46411d8aa5a14c4",
-            "modified": "2025-04-14T08:29:37+00:00",
+            "modified": "2025-05-21T07:07:42+00:00",
             "name": "i360/i360.ndb",
             "url": "https://files.imunify360.com/static/sigs/v1/i360/i360.ndb"
         },
         {
             "md5sum": "1e010061c218cdc6ca076b752339042e",
-            "modified": "2025-04-14T08:29:37+00:00",
+            "modified": "2025-05-21T07:07:42+00:00",
             "name": "i360/i360.hdb",
             "url": "https://files.imunify360.com/static/sigs/v1/i360/i360.hdb"
         },
         {
             "md5sum": "aa56f8d1b231dd1ee46411d8aa5a14c4",
-            "modified": "2025-04-14T08:29:37+00:00",
+            "modified": "2025-05-21T07:07:42+00:00",
             "name": "i360/i360.ldb",
             "url": "https://files.imunify360.com/static/sigs/v1/i360/i360.ldb"
         }
