@@ -1,7 +1,7 @@
 <?php
 
 ///////////////////////////////////////////////////////////////////////////
-// Version: 32.5.1
+// Version: 32.5.2
 // Copyright 2018-2025 CloudLinux Software Inc.
 ///////////////////////////////////////////////////////////////////////////
 
@@ -175,7 +175,7 @@ if (!(function_exists("file_put_contents") && is_callable("file_put_contents")))
     exit;
 }
 
-define('AI_VERSION', '32.5.1');
+define('AI_VERSION', '32.5.2');
 
 ////////////////////////////////////////////////////////////////////////////
 $g_SpecificExt = false;
@@ -3528,6 +3528,16 @@ abstract class Report
     const AIBOLIT_MAX_NUMBER = 200;
 
     /**
+     * @var bool
+     */
+    protected $sanitize_signatures = false;
+
+    /**
+     * @var array
+     */
+    protected $mnemo = [];
+
+    /**
      * Report constructor.
      * @param $mnemo
      * @param $path
@@ -3555,6 +3565,7 @@ abstract class Report
      * @param $echo
      * @param $stat
      * @param $debug
+     * @param bool $sanitize_signatures
      * @phpstan-ignore-next-line
      */
     public function __construct(
@@ -3583,7 +3594,8 @@ abstract class Report
         $file,
         $echo,
         $stat,
-        $debug
+        $debug,
+        $sanitize_signatures = false
     ) {
     }
 
@@ -3667,6 +3679,67 @@ abstract class Report
 
         return true;
     }
+
+    protected function moveSanitizedToExtSuspicious(&$vars)
+    {
+        if (!$this->sanitize_signatures) {
+            return;
+        }
+        $moveToExtSuspicious = function (&$srcArr, &$srcFragment, &$srcSig, &$vars, $black = false) {
+            $toMove = [];
+            $targetArr = 'suspiciousExt';
+            $targetFragment = 'suspiciousExtFragment';
+            $targetSig = 'suspiciousExtSig';
+            foreach ($srcArr as $i => $idx) {
+                $sig = null;
+                if (is_array($srcSig[$i])) {
+                    $l_SigId = $black ? crc32($vars->structure['n'][$srcArr[$i]]) : key($srcSig[$i]);
+                    $sig = $black ? $srcSig[$i][key($srcSig[$i])] : $srcSig[$i][$l_SigId];
+                } else {
+                    $sig = isset($this->mnemo[$srcSig[$i]]) ? $this->mnemo[$srcSig[$i]] : $srcSig[$i];
+                }
+
+                if ($this->shouldSanitizeSignature($sig)) {
+                    $sanitized = $this->sanitizeSignatureName($sig);
+                    if ($sanitized !== $sig) {
+                        $vars->$targetArr[] = $idx;
+                        if (is_array($srcFragment) && isset($srcFragment[$i])) {
+                            $vars->$targetFragment[] = $srcFragment[$i];
+                        }
+                        $vars->$targetSig[] = $sanitized;
+                        $toMove[] = $i;
+                    }
+                }
+            }
+            foreach (array_reverse($toMove) as $i) {
+                array_splice($srcArr, $i, 1);
+                if (is_array($srcFragment) && isset($srcFragment[$i])) {
+                    array_splice($srcFragment, $i, 1);
+                }
+                if (isset($srcSig[$i])) {
+                    array_splice($srcSig, $i, 1);
+                }
+            }
+        };
+        $moveToExtSuspicious($vars->criticalPHP, $vars->criticalPHPFragment, $vars->criticalPHPSig, $vars);
+        $moveToExtSuspicious($vars->criticalJS, $vars->criticalJSFragment, $vars->criticalJSSig, $vars);
+        $moveToExtSuspicious($vars->warningPHP, $vars->warningPHPFragment, $vars->warningPHPSig, $vars);
+        $dummy = null;
+        $moveToExtSuspicious($vars->blackFiles, $dummy, $vars->blackFilesSig, $vars, true);
+    }
+
+    protected function shouldSanitizeSignature($sig)
+    {
+        // Match admin.tool, admin-tool, admin.tools, admin-tools
+        return $this->sanitize_signatures
+            && is_string($sig)
+            && preg_match('/admin[\.\-]tools?/', $sig);
+    }
+
+    protected function sanitizeSignatureName($sig)
+    {
+        return preg_replace('/-(BLKH-SA|BLKH|INJ|SA)-/', '-ESUS-', $sig);
+    }
 }
 
 
@@ -3686,13 +3759,11 @@ class JSONReport extends Report
     private $report_mask;
     private $noPrefix;
     private $addPrefix;
-    private $mnemo;
     private $small;
     protected $file;
     private $echo;
     private $stat;
     private $debug;
-    private $sanitize_signatures = false;
 
     /** @phpstan-ignore-next-line */
     public function __construct(
@@ -4081,50 +4152,6 @@ class JSONReport extends Report
             $this->raw_report['summary']['AT_CLKTCK'] = $tick;
         }
     }
-
-    private function moveSanitizedToExtSuspicious(&$vars)
-    {
-        if (!$this->sanitize_signatures) {
-            return;
-        }
-        $moveToExtSuspicious = function (&$srcArr, &$srcFragment, &$srcSig, &$vars) {
-            $toMove = [];
-            $targetArr = 'suspiciousExt';
-            $targetFragment = 'suspiciousExtFragment';
-            $targetSig = 'suspiciousExtSig';
-            foreach ($srcArr as $i => $idx) {
-                $sig = isset($srcSig[$i]) ? $srcSig[$i] : (isset($this->mnemo[$idx]) ? $this->mnemo[$idx] : null);
-                if ($this->shouldSanitizeSignature($sig)) {
-                    $sanitized = $this->sanitizeSignatureName($sig);
-                    if ($sanitized !== $sig) {
-                        $vars->$targetArr[] = $idx;
-                        if (isset($srcFragment[$i])) $vars->$targetFragment[] = $srcFragment[$i];
-                        $vars->$targetSig[] = $sanitized;
-                        $toMove[] = $i;
-                    }
-                }
-            }
-            foreach (array_reverse($toMove) as $i) {
-                array_splice($srcArr, $i, 1);
-                if (isset($srcFragment[$i])) array_splice($srcFragment, $i, 1);
-                if (isset($srcSig[$i])) array_splice($srcSig, $i, 1);
-            }
-        };
-        $moveToExtSuspicious($vars->criticalPHP, $vars->criticalPHPFragment, $vars->criticalPHPSig, $vars);
-        $moveToExtSuspicious($vars->criticalJS, $vars->criticalJSFragment, $vars->criticalJSSig, $vars);
-        $moveToExtSuspicious($vars->warningPHP, $vars->warningPHPFragment, $vars->warningPHPSig, $vars);
-    }
-
-    private function shouldSanitizeSignature($sig)
-    {
-        // Only sanitize if enabled, $sig is a string, and contains 'admin.tool'
-        return $this->sanitize_signatures && is_string($sig) && strpos($sig, 'admin.tool') !== false;
-    }
-
-    private function sanitizeSignatureName($sig)
-    {
-            return preg_replace('/-(BLKH-SA|BLKH|INJ|SA)-/', '-ESUS-', $sig);
-    }
 }
 
 
@@ -4163,7 +4190,6 @@ class PlainReport extends Report
     private $ai_extra_warn;
     private $noPrefix;
     private $addPrefix;
-    private $mnemo;
     private $file;
     private $raw_report;
 
@@ -4346,7 +4372,6 @@ class CSVReport extends Report
     private $ai_extra_warn;
     private $noPrefix;
     private $addPrefix;
-    private $mnemo;
     private $file;
     private $stat;
 
@@ -4376,7 +4401,9 @@ class CSVReport extends Report
         $small = false,
         $file = false,
         $echo = false,
-        $stat = false
+        $stat = false,
+        $debug = null,
+        $sanitize_signatures = false
     ) {
         $this->mnemo = $mnemo;
         $this->ai_extra_warn = $ai_extra_warn;
@@ -4386,6 +4413,7 @@ class CSVReport extends Report
         $this->noPrefix = $no_prefix;
         $this->file = $file;
         $this->stat = $stat;
+        $this->sanitize_signatures = $sanitize_signatures;
 
         if ($this->file) {
             @unlink($this->file);
@@ -4395,6 +4423,8 @@ class CSVReport extends Report
 
     public function generateReport($vars, $scan_time = false)
     {
+        $this->moveSanitizedToExtSuspicious($vars);
+
         if (count($vars->criticalPHP) > 0) {
             $this->writeRawCSV($vars->criticalPHP, $vars, self::CRITICAL_PHP, $vars->criticalPHPFragment, $vars->criticalPHPSig);
         }
@@ -4490,7 +4520,7 @@ class CSVReport extends Report
                 $res[] = '';
             }
 
-            fputcsv($fh, $res);
+            fputcsv($fh, $res, ',', '"', '\\');
         }
         fflush($fh);
         fclose($fh);
@@ -4576,7 +4606,7 @@ class CSVReport extends Report
                 $res[] = $vars->structure['g'][$l_Pos];
                 $res[] = $vars->structure['p'][$l_Pos];
             }
-            fputcsv($fh, $res);
+            fputcsv($fh, $res,  ',', '"', '\\');
         }
         fflush($fh);
         fclose($fh);
@@ -4713,7 +4743,6 @@ class HTMLReport extends Report
     private $report_mask;
     private $noPrefix;
     private $addPrefix;
-    private $mnemo;
     private $small;
     private $file;
     private $echo;
@@ -11198,6 +11227,9 @@ class PerformanceStats
 
     public static function addPerformanceItem($item, $time)
     {
+        if (!isset(self::$performance_stats[$item])) {
+            self::$performance_stats[$item] = 0;
+        }
         self::$performance_stats[$item] += $time;
     }
 

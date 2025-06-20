@@ -17,7 +17,7 @@ if (!defined('CLS_SCAN_CHECKERS')) {
 }
 
 if (!defined('MDS_VERSION')) {
-    define('MDS_VERSION', 'HOSTER-32.5.1');
+    define('MDS_VERSION', 'HOSTER-32.5.2');
 }
 
 $scan_signatures    = null;
@@ -340,24 +340,44 @@ function getCreds($config, $argc, $argv, $progress)
     return $creds;
 }
 
+/**
+ * @param $config
+ * @param $scan_signatures
+ * @param $progress
+ * @param $log
+ * @param $tables_config
+ * @param $prescan
+ * @param $clean_db
+ * @param $state
+ * @param $lic
+ * @param $i
+ * @param $detached
+ * @param $cred
+ * @return void
+ * @throws Exception
+ */
 function scanDB($config, $scan_signatures, $progress, $log, $tables_config, $prescan, $clean_db, $state, $lic, $i, $detached, $cred)
 {
     try {
-        $backup = null;
+        $sqliteBackupManager = null;
         if (empty($config->get(MDSConfig::PARAM_DATABASE))) {
             throw new MDSException(MDSErrors::MDS_NO_DATABASE);
         }
 
-        if ($progress->getDbCount() > 1 && !$config->get(MDSConfig::PARAM_SCAN)) {
-            throw new MDSException(MDSErrors::MDS_MULTIPLE_DBS, $progress->getDbCount());
+        if (
+            $progress->getDbCount() > 1 &&
+            !$config->get(MDSConfig::PARAM_SCAN) &&
+            !$config->get(MDSConfig::PARAM_CLEAN) &&
+            !$config->get(MDSConfig::PARAM_RESTORE) &&
+            !($config->get(MDSConfig::PARAM_OPERATION) === MDSConfig::PARAM_RESTORE_SIG_ID)
+        ) {
+            throw new MDSException(MDSErrors::MDS_MULTIPLE_DBS, $progress->getDbCount() . " for an unspecified or unsupported operation type when --path yields multiple targets.");
         }
 
         $progress->setCurrentDb($i, $config->get(MDSConfig::PARAM_DATABASE));
-
         $log->info('MDS DB scan: started ' . $config->get(MDSConfig::PARAM_DATABASE));
 
         $report_filename = 'dbscan-' . $config->get(MDSConfig::PARAM_DATABASE) . '-' . $config->get(MDSConfig::PARAM_LOGIN) . '-' . time() . '.json';
-
 
         if ($config->get(MDSConfig::PARAM_DETACHED)) {
             $config->set(MDSConfig::PARAM_REPORT_FILE, $detached->getWorkDir() . '/' . 'report' . $i . '.json');
@@ -388,26 +408,41 @@ function scanDB($config, $scan_signatures, $progress, $log, $tables_config, $pre
             throw $report->getError();
         }
 
-        $report->setMalwareDbVer($scan_signatures->getDBMetaInfoVersion());
+        if (isset($scan_signatures) && method_exists($scan_signatures, 'getDBMetaInfoVersion')) {
+            $report->setMalwareDbVer($scan_signatures->getDBMetaInfoVersion());
+        }
 
         setOpFromConfig($config, $report, $detached);
-
         $report->setScanId($config->get(MDSConfig::PARAM_DETACHED));
 
         if (isset($cred['db_app'])) {
             $report->setApp($cred['db_app']);
         }
-
         if (isset($cred['app_owner_uid'])) {
             $report->setAppOwnerUId($cred['app_owner_uid']);
         }
-
         if (isset($cred['db_path'])) {
             $report->setPath($cred['db_path']);
         }
 
+        $app_root_path_from_context = $cred['db_path'] ?? null;
+        $app_name_from_context = $cred['db_app'] ?? 'unknown';
+        $scan_id_from_context = $config->get(MDSConfig::PARAM_DETACHED) ?: ("manual_scan_" . $cred['db_name'] . "_" . time());
+
+
         if ($config->get(MDSConfig::PARAM_CLEAN)) {
-            $backup = new MDSBackup($config->get(MDSConfig::PARAM_BACKUP_FILEPATH));
+            $sqliteBackupManager = new MDSSQLiteBackup($config);
+            try {
+                $prunedCount = $sqliteBackupManager->pruneRecords();
+                if ($log && $prunedCount > 0) {
+                    $log->info("MDSSQLiteBackup: Pruned {$prunedCount} old backup records from SQLite.");
+                }
+            } catch (MDSSQLiteBackupException $e) {
+                $log->error("MDSSQLiteBackup: Pruning error - " . $e->getMessage());
+                if ($report) {
+                    $report->addError(MDSErrors::MDS_SQLITE_PRUNE_ERROR, $e->getMessage());
+                }
+            }
         }
 
         mysqli_report(MYSQLI_REPORT_STRICT);
@@ -432,6 +467,7 @@ function scanDB($config, $scan_signatures, $progress, $log, $tables_config, $pre
         $res = @$db_connection->query('SELECT count(TO_BASE64("test")) > 0;');
         if ($res instanceof \mysqli_result) {
             $base64_sup = true;
+            $res->free();
         }
 
         if (!$base64_sup) {
@@ -445,7 +481,14 @@ function scanDB($config, $scan_signatures, $progress, $log, $tables_config, $pre
             $report->setUnknownUrlsSend(new MDSSendUrls(Factory::instance()->create(MDSCollectUrlsRequest::class)));
         }
 
-        if ($config->get(MDSConfig::PARAM_CLEAN) || $config->get(MDSConfig::PARAM_SCAN)) {
+        // Scan logic
+        if ($config->get(MDSConfig::PARAM_SCAN) || $config->get(MDSConfig::PARAM_CLEAN)) {
+            if (!isset($scan_signatures)) {
+                list($scan_signatures, $clean_db_dummy) = loadMalwareSigns($config);
+                if (isset($scan_signatures) && method_exists($scan_signatures, 'getDBMetaInfoVersion')) {
+                    $report->setMalwareDbVer($scan_signatures->getDBMetaInfoVersion());
+                }
+            }
             MDSScanner::scan(
                 $prescan,
                 $config->get(MDSConfig::PARAM_DATABASE),
@@ -458,28 +501,86 @@ function scanDB($config, $scan_signatures, $progress, $log, $tables_config, $pre
                 $progress,
                 $state,
                 $report,
-                $backup,
+                $sqliteBackupManager,
                 $config->get(MDSConfig::PARAM_SCAN),
                 $config->get(MDSConfig::PARAM_CLEAN),
                 $log,
-                $config->get(MDSConfig::PARAM_SIZE_LIMIT)
+                $config->get(MDSConfig::PARAM_SIZE_LIMIT),
+                $app_root_path_from_context,
+                $app_name_from_context,
+                $scan_id_from_context
             );
         }
+        if ($config->get(MDSConfig::PARAM_OPERATION) === MDSConfig::PARAM_RESTORE) {
+            $report->setOp(MDSConfig::PARAM_RESTORE);
+            $csvBackupPath = $config->get(MDSConfig::PARAM_RESTORE);
 
-        if ($config->get(MDSConfig::PARAM_RESTORE)) {
-            $report->setOp($config->get(MDSConfig::PARAM_OPERATION));
-            $restore = new MDSRestore(
-                $config->get(MDSConfig::PARAM_RESTORE),
-                $db_connection,
-                $progress,
-                $report,
-                $state,
-                $log
-            );
-            $restore->restore($config->get(MDSConfig::PARAM_MAX_RESTORE_BATCH));
-            $restore->finish();
+            if ($csvBackupPath && file_exists($csvBackupPath) && is_readable($csvBackupPath)) {
+                $log->info("Attempting restore for app path '" . $app_root_path_from_context . "' from CSV: " . $csvBackupPath);
+                $legacyRestore = new MDSRestore(
+                    $csvBackupPath,
+                    $db_connection,
+                    $progress,
+                    $report,
+                    $state,
+                    $log
+                );
+                $legacyRestore->restore($config->get(MDSConfig::PARAM_MAX_RESTORE_BATCH));
+                $legacyRestore->finish();
+            } else {
+                $log->info("CSV backup not found at '" . (string)$csvBackupPath . "' for app path '" . $app_root_path_from_context . "'. Attempting restore from SQLite.");
+                $sqliteRestoreManager = new MDSSQLiteRestore($config);
+                try {
+                    $sqliteRestoreManager->restoreAllForAppPath(
+                        $app_root_path_from_context,
+                        $app_name_from_context,
+                        $db_connection,
+                        $report,
+                        $state,
+                        $log,
+                        $config->get(MDSConfig::PARAM_MAX_RESTORE_BATCH)
+                    );
+                } catch (MDSSQLiteRestoreException $e) {
+                    $log->error("SQLite restoreAllForAppPath failed: " . $e->getMessage());
+                    $report->addError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $e->getMessage());
+                } finally {
+                    $sqliteRestoreManager->close();
+                }
+            }
+        } elseif ($config->get(MDSConfig::PARAM_OPERATION) === MDSConfig::PARAM_RESTORE_SIG_ID) {
+            $report->setOp(MDSConfig::PARAM_RESTORE_SIG_ID);
+            $signatureIdToRestore = $config->get(MDSConfig::PARAM_RESTORE_SIG_ID);
+
+            if (empty($signatureIdToRestore)) {
+                $log->error("No signature ID provided for --restore-sig-id operation.");
+                throw new MDSException(MDSErrors::MDS_INVALID_ARGS, "--restore-sig-id requires a signature ID.");
+            }
+            if (empty($app_root_path_from_context)) {
+                $log->error("No --path provided for --restore-sig-id operation, which is mandatory.");
+                throw new MDSException(MDSErrors::MDS_INVALID_ARGS, "--restore-sig-id requires --path.");
+            }
+
+            $log->info("Attempting selective restore for signature ID: " . $signatureIdToRestore . " for app path: " . $app_root_path_from_context);
+
+            $sqliteRestoreManager = new MDSSQLiteRestore($config);
+            try {
+                $sqliteRestoreManager->restoreBySignatureId(
+                    $signatureIdToRestore,
+                    $app_root_path_from_context,
+                    $app_name_from_context,
+                    $db_connection,
+                    $report,
+                    $state,
+                    $log,
+                    $config->get(MDSConfig::PARAM_MAX_RESTORE_BATCH)
+                );
+            } catch (MDSSQLiteRestoreException $e) {
+                $log->error("SQLite restoreBySignatureId failed: " . $e->getMessage());
+                $report->addError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $e->getMessage());
+            } finally {
+                $sqliteRestoreManager->close();
+            }
         }
-
         $ch = null;
         if (!$config->get(MDSConfig::PARAM_DO_NOT_SEND_STATS)) {
             $request = new SendMessageRequest('MDS');
@@ -493,32 +594,43 @@ function scanDB($config, $scan_signatures, $progress, $log, $tables_config, $pre
 
         $db_connection->close();
         $log->info('MDS DB scan: finished ' . $config->get(MDSConfig::PARAM_DATABASE));
-
         $progress->setCurrentDb($i, $config->get(MDSConfig::PARAM_DATABASE), true);
+        if ($sqliteBackupManager) {
+            $sqliteBackupManager->close();
+        }
     } catch (MDSException $ex) {
-        // @phpstan-ignore-next-line
-        if ($db_connection) {
+        if (isset($sqliteBackupManager) && $sqliteBackupManager) {
+            $sqliteBackupManager->close();
+        }
+        if (isset($db_connection) && $db_connection) {
             $db_connection->close();
         }
-        onError($detached, $progress, $report ?? null, $ex);
+        onError($detached, $progress, $report, $ex);
     } catch (mysqli_sql_exception $e) {
-        // @phpstan-ignore-next-line
-        if ($db_connection) {
+        if (isset($sqliteBackupManager) && $sqliteBackupManager) {
+            $sqliteBackupManager->close();
+        }
+        if (isset($db_connection) && $db_connection) {
             $db_connection->close();
         }
-        $ex = new MDSException(MDSErrors::MDS_CONNECT_ERROR, $config->get(MDSConfig::PARAM_LOGIN) . '@' . $config->get(MDSConfig::PARAM_HOST));
+        $ex = new MDSException(MDSErrors::MDS_CONNECT_ERROR, $config->get(MDSConfig::PARAM_LOGIN) . '@' . $config->get(MDSConfig::PARAM_HOST) . ' - ' . $e->getMessage());
         onError($detached, $progress, $report, $ex);
     }
 }
 
 function onError($detached, $progress, $report, $ex)
 {
-    if ((isset($detached) || ($progress->getDbCount() > 1)) && (isset($report) && $report->getError() === null)) {
-        $report->setPath(null);
-        $report->setApp(null);
-        $report->addError($ex->getErrCode(), $ex->getErrMsg());
-        $report->save();
-    } else {
+    if (isset($report) && $report->getError() === null) {
+        if (isset($detached) || ($progress->getDbCount() > 1)) {
+            $report->setPath(null);
+            $report->setApp(null);
+            $report->addError($ex->getErrCode(), $ex->getErrMsg());
+            $report->save();
+            return;
+        }
+    }
+
+    if (!isset($detached) && !($progress->getDbCount() > 1)) {
         throw $ex;
     }
 }
@@ -770,6 +882,7 @@ class MDSConfig extends Config
     const PARAM_SIZE_LIMIT          = 'size';
     const PARAM_BACKUP_TTL          = 'backupTTL';
     const PARAM_SQLITE_DB_PATH      = 'sqliteDbPath';
+    const PARAM_RESTORE_SIG_ID      = 'restore-sig-id';
 
     /**
      * @var array Default config
@@ -829,6 +942,7 @@ class MDSConfig extends Config
         self::PARAM_PROGRESS_STDOUT     => false,
         self::PARAM_BACKUP_TTL          => 2592000, // Default 1 month (30 * 24 * 60 * 60 seconds)
         self::PARAM_SQLITE_DB_PATH      => '/var/imunify360/cleanup_storage/mds_backup.sqlite3',
+        self::PARAM_RESTORE_SIG_ID      => null,
     ];
 
     /**
@@ -1072,6 +1186,8 @@ class MDSCliParse extends CliParse
         MDSConfig::PARAM_MEMORY_LIMIT           => ['short' => '',  'long' => 'memory',                 'needValue' => true],
         MDSConfig::PARAM_SIZE_LIMIT             => ['short' => '',  'long' => 'size',                   'needValue' => true],
         MDSConfig::PARAM_BACKUP_TTL             => ['short' => '',  'long' => 'backup-ttl',             'needValue' => true],
+        MDSConfig::PARAM_RESTORE_SIG_ID         => ['short' => '',  'long' => 'restore-sig-id',         'needValue' => true],
+        MDSConfig::PARAM_SQLITE_DB_PATH         => ['short' => '',  'long' => 'sqlite-db-path',         'needValue' => true],
     ];
 
     /**
@@ -1106,6 +1222,9 @@ class MDSCliParse extends CliParse
             $this->config->set(MDSConfig::PARAM_OPERATION, MDSConfig::PARAM_CLEAN);
         } elseif ($this->config->get(MDSConfig::PARAM_RESTORE)) {
             $this->config->set(MDSConfig::PARAM_OPERATION, MDSConfig::PARAM_RESTORE);
+        } elseif ($this->issetParam(MDSConfig::PARAM_RESTORE_SIG_ID) && $this->getParamValue(MDSConfig::PARAM_RESTORE_SIG_ID) !== null) {
+            $this->config->set(MDSConfig::PARAM_OPERATION, MDSConfig::PARAM_RESTORE_SIG_ID);
+            $this->config->set(MDSConfig::PARAM_RESTORE_SIG_ID, $this->getParamValue(MDSConfig::PARAM_RESTORE_SIG_ID));
         }
 
         if (function_exists('stream_isatty') && !@stream_isatty(STDOUT)) {
@@ -1132,7 +1251,7 @@ class MDSCliParse extends CliParse
             $this->showHelp();
         } elseif ($this->config->get(MDSConfig::PARAM_VERSION)) {
             $this->showVersion();
-        } elseif (!$this->config->get(MDSConfig::PARAM_OPERATION) && !$this->config->get(MDSConfig::PARAM_SEARCH_CONFIGS)) {
+        } elseif (!$this->config->get(MDSConfig::PARAM_OPERATION) && !$this->config->get(MDSConfig::PARAM_SEARCH_CONFIGS) && !$this->getParamValue(MDSConfig::PARAM_RESTORE_SIG_ID)) {
             $this->showHelp();
         }
         // here maybe re-define some of $factoryConfig elements
@@ -1172,6 +1291,7 @@ Usage: php {$_SERVER['PHP_SELF']} [OPTIONS]
       --procudb=<filepath>              Filepath with procu signatures db
       --state-file=<filepath>           Filepath with info about state(content: new|working|done|canceled). You can change it on canceled
       --restore=<filepath>              Filepath to restore csv file
+      --restore-sig-id=<SIG_ID>         Restore specific finding by signature ID from SQLite backup. Requires --path.
       --log-file=<filepath>             Filepath to log file
       --log-level=<LEVEL>               Log level (types: ERROR|DEBUG|INFO|ALL). You can use multiple by using comma (example: DEBUG,INFO)
       --do-not-send-urls                Do not send unknown urls to server for deeper analysis
@@ -1181,7 +1301,7 @@ Usage: php {$_SERVER['PHP_SELF']} [OPTIONS]
       --do-not-send-stats               Do not send report to Imunify correlation server
       --db-timeout=<timeout>            Timeout for connect/read db in seconds
       --detached=<scan_id>              Run MDS in detached mode
-      --path=<path>                     Scan/clean CMS dbs from <path> with help AppVersionDetector
+      --path=<path>                     Scan/clean/restore CMS dbs from <path> with help AppVersionDetector. Mandatory for --restore and --restore-sig-id.
       --paths=<file>                    Scan/clean CMS dbs base64 encoded paths from <file> with help AppVersionDetector
       --app-name=<app-name>             Filter AppVersionDetector dbs for scan with <app-name>. Currently supported only 'wp-core'.
       --do-not-use-umask                MDS uses umask 0027, but if you use this parameter, then umask will not be set
@@ -2742,22 +2862,39 @@ class MDSPreScanQuery
 class MDSScannerTable
 {
     /**
-     * @param mysqli                $connection
-     * @param MDSPreScanQuery       $query
-     * @param LoadSignaturesForScan $signature_db
-     * @param int                   $max_clean
-     * @param array                 $clean_db
-     * @param MDSProgress           $progress
-     * @param MDSState              $state
-     * @param MDSJSONReport         $report
-     * @param MDSBackup             $backup
-     * @param Logger                $log
-     * @param array                 $table_config
-     *
-     * @throws Exception
+     * @param $connection
+     * @param $query
+     * @param $signature_db
+     * @param $max_clean
+     * @param LoadSignaturesForClean|null $clean_signatures_obj
+     * @param $progress
+     * @param $state
+     * @param $report
+     * @param MDSSQLiteBackup|null $sqliteBackupManager
+     * @param $log
+     * @param $table_config
+     * @param string|null $app_root_path_from_context
+     * @param string $app_name_from_context
+     * @param string|null $scan_id_from_context
+     * @return void
+     * @throws MDSException
      */
-    public static function scan($connection, $query, $signature_db, $max_clean, $clean_db = null, $progress = null, $state = null, $report = null, $backup = null, $log = null, $table_config = null)
-    {
+    public static function scan(
+        $connection,
+        $query,
+        $signature_db,
+        $max_clean,
+        ?LoadSignaturesForClean $clean_signatures_obj = null,
+        $progress = null,
+        $state = null,
+        $report = null,
+        ?MDSSQLiteBackup $sqliteBackupManager = null,
+        $log = null,
+        $table_config = null,
+        ?string $app_root_path_from_context = null,
+        string $app_name_from_context = 'unknown',
+        ?string $scan_id_from_context = null
+    ) {
         $total_scanned_cells = 0;
         $total_scanned_rows = 0;
         $detected = 0;
@@ -2800,7 +2937,7 @@ class MDSScannerTable
             return;
         }
         while ($res && $res->num_rows > 0) {
-            if (!isset($clean_db)) {
+            if (!isset($clean_signatures_obj)) {
                 foreach ($res as $row) {
                     if (self::isCanceled($state)) {
                         $log->info('Task canceled in progress');
@@ -2972,12 +3109,24 @@ class MDSScannerTable
                             }
                         }
                     }
-                    if ($backup instanceof MDSBackup) {
-                        foreach ($list->getEntriesWithScanResultsOnlyBlack() as $index => $entry) {
-                            $backup->backup($query->getDB(), $query->getTable(), $entry->getField(), $query->getKey(), $entry->getKey(), $entry->getContent());
-                        }
-                    }
-                    MDSCleanup::cleanBatch($list, $detected + $detected_url, $cleaned, $clean_db, $connection, $query, $progress, $table_config);
+
+                    MDSCleanup::cleanBatch(
+                        $list,
+                        $detected + $detected_url,
+                        $cleaned,
+                        $clean_signatures_obj,
+                        $connection,
+                        $query,
+                        $progress,
+                        $table_config,
+                        $sqliteBackupManager,
+                        $app_root_path_from_context,
+                        $app_name_from_context,
+                        $scan_id_from_context,
+                        $report,
+                        $log
+                    );
+
                     foreach ($list->getEntriesWithCleanErrors() as $index => $entry) {
                         $report->addCleanedError('', '', $query->getTable(), $entry->getKey(), $entry->getField(), MDSErrors::MDS_CLEANUP_ERROR);
                     }
@@ -3063,33 +3212,61 @@ class MDSScanner
     const QUERY_DATA_PART_LIMIT = 250;
 
     /**
-     * @param string                $prescan - prescan string
-     * @param string                $database - db name (null to scan all dbs that user have access to)
-     * @param string                $prefix - prefix (null to disable filter by prefix)
-     * @param MDSFindTables         $mds_find
-     * @param mysqli                $connection
-     * @param LoadSignaturesForScan $scan_signatures
-     * @param int                   $max_clean
-     * @param array                 $clean_db
-     * @param MDSProgress           $progress
-     * @param MDSState              $state
-     * @param MDSJSONReport         $report
-     * @param MDSBackup             $backup
-     * @param bool                  $scan
-     * @param bool                  $clean
-     * @param Logger                $log
-     * @param int                   $size_limit
-     * @throws Exception
+     * @param $prescan
+     * @param $database
+     * @param $prefix
+     * @param $mds_find
+     * @param $connection
+     * @param $scan_signatures
+     * @param $max_clean
+     * @param $clean_db
+     * @param $progress
+     * @param $state
+     * @param $report
+     * @param MDSSQLiteBackup|null $sqliteBackupManager
+     * @param $scan
+     * @param $clean
+     * @param $log
+     * @param $size_limit
+     * @param string|null $app_root_path_from_context
+     * @param string $app_name_from_context
+     * @param string|null $scan_id_from_context
+     * @return void
+     * @throws MDSException
      */
-    public static function scan($prescan, $database, $prefix, $mds_find, $connection, $scan_signatures, $max_clean = 100, $clean_db = null, $progress = null, $state = null, $report = null, $backup = null, $scan = true, $clean = false, $log = null, $size_limit = 650 * 1024)
-    {
-
+    public static function scan(
+        //REQUIRED PARAMS
+        $prescan,
+        $database,
+        $prefix,
+        $mds_find,
+        $connection,
+        $scan_signatures,
+        //OPTIONAL PARAMS
+        $max_clean = 100,
+        $clean_db = null,
+        $progress = null,
+        $state = null,
+        $report = null,
+        ?MDSSQLiteBackup $sqliteBackupManager = null,
+        $scan = true,
+        $clean = false,
+        $log = null,
+        $size_limit = 650 * 1024,
+        ?string $app_root_path_from_context = null,
+        string $app_name_from_context = 'unknown',
+        ?string $scan_id_from_context = null
+    ) {
         $start_time = AibolitHelpers::currentTime();
 
         $tables = $mds_find->find($database, $prefix);
         if (empty($tables)) {
-            $log->error('Not found any supported tables. Nothing to scan.');
-            throw new MDSException(MDSErrors::MDS_NO_SUP_TABLES_ERROR, $database, $report->getUser(), $report->getHost());
+            if ($log) $log->error('Not found any supported tables. Nothing to scan.');
+            if ($report) {
+                throw new MDSException(MDSErrors::MDS_NO_SUP_TABLES_ERROR, $database, $report->getUser(), $report->getHost());
+            } else {
+                throw new MDSException(MDSErrors::MDS_NO_SUP_TABLES_ERROR, $database, 'N/A', 'N/A');
+            }
         }
 
         if ($progress instanceof MDSProgress) {
@@ -3100,23 +3277,48 @@ class MDSScanner
             return;
         }
 
-        $log->info('MDS Scan: started');
+        if ($log) $log->info('MDS Scan: started');
 
         foreach ($tables as $i => $table) {
             if ($progress instanceof MDSProgress) {
-                $progress->setCurrentTable($i, $table);
+                $progress->setCurrentTable($i, $table['table']);
             }
             $scan_signatures->setOwnUrl($table['domain_name']);
-            $prescan_query = new MDSPreScanQuery($prescan, $table['config']['fields'], $table['config']['fields_additional_data'] ?? [], $table['config']['key'], $table['table'], $table['db'], $size_limit, self::QUERY_DATA_PART_LIMIT);
-            $log->debug(sprintf('Scanning table: "%s"', $table['table']));
+
+            $pkColumnName = $table['config']['key'] ?? 'id';
+            $prescan_query = new MDSPreScanQuery(
+                $prescan,
+                $table['config']['fields'],
+                $table['config']['fields_additional_data'] ?? [],
+                $pkColumnName,
+                $table['table'],
+                $table['db'],
+                $size_limit
+            );
+            if ($log) $log->debug(sprintf('Scanning table: "%s"', $table['table']));
             try {
-                MDSScannerTable::scan($connection, $prescan_query, $scan_signatures, $max_clean, $clean_db, $progress, $state, $report, $backup, $log, $table['config']);
+                MDSScannerTable::scan(
+                    $connection,
+                    $prescan_query,
+                    $scan_signatures,
+                    $max_clean,
+                    $clean_db,
+                    $progress,
+                    $state,
+                    $report,
+                    $sqliteBackupManager,
+                    $log,
+                    $table['config'],
+                    $app_root_path_from_context,
+                    $app_name_from_context,
+                    $scan_id_from_context
+                );
             } catch (MDSException $ex) {
-                $report->addError($ex->getErrCode(), $ex->getErrMsg());
+                if ($report) $report->addError($ex->getErrCode(), $ex->getErrMsg());
             }
 
             if ($progress instanceof MDSProgress) {
-                $progress->setCurrentTable($i, $table, true);
+                $progress->setCurrentTable($i, $table['table'], true);
             }
         }
 
@@ -3125,14 +3327,10 @@ class MDSScanner
             $report->setRunningTime(AibolitHelpers::currentTime() - $start_time);
         }
 
-        $log->info(sprintf('MDS Scan: finished. Time taken: %f second(s)', AibolitHelpers::currentTime() - $start_time));
+        if ($log) $log->info(sprintf('MDS Scan: finished. Time taken: %f second(s)', AibolitHelpers::currentTime() - $start_time));
 
         if ($progress instanceof MDSProgress) {
             $progress->finalize();
-        }
-
-        if ($backup instanceof MDSBackup) {
-            $backup->finish();
         }
     }
 }
@@ -3331,98 +3529,791 @@ class MDSState
     }
 }
 
-/**
- * Class MDSBackup Backup data to csv
- */
-class MDSBackup
+class MDSSQLiteBackup
 {
-    private $fhandle;
-    private $hmemory;
-    private $uniq = [];
+    const DB_DIR_DEFAULT = '/var/imunify360/cleanup_storage';
+    const DB_FILE_NAME_DEFAULT = 'mds_backup.sqlite3';
+    const TABLE_NAME = 'quarantine';
+    const DB_FILE_PERMISSIONS = 0640;
+
+    /** @var SQLite3|null */
+    private $db = null;
+    /** @var MDSConfig */
+    private $config;
+
+    private $busyTimeout = 3000;// 3 sec
+
+    private string $dbPath;
+
+    public function __construct(MDSConfig $config)
+    {
+        $this->config = $config;
+        $this->dbPath = $this->config->get(MDSConfig::PARAM_SQLITE_DB_PATH)
+            ?: (self::DB_DIR_DEFAULT . '/' . self::DB_FILE_NAME_DEFAULT);
+    }
 
     /**
-     * MDSBackup constructor.
-     * @param string $file
+     * @return SQLite3
+     * @throws MDSSQLiteBackupException
      */
-    public function __construct($file = '')
+    private function connect(): SQLite3
     {
-        if ($file === '') {
-            $file = @is_writable('/var/imunify360/tmp') ? '/var/imunify360/tmp' : getcwd();
-            $file .= '/mds_backup_' . time() . '.csv';
+        if ($this->db instanceof SQLite3) {
+            return $this->db;
         }
-        $this->fhandle = fopen($file, 'a');
-        $this->hmemory = fopen('php://memory', 'w+');
 
-        if (!($this->fhandle && $this->hmemory)) {
-            throw new MDSException(MDSErrors::MDS_BACKUP_ERROR);
+        $dbDir = dirname($this->dbPath);
+
+        if (!is_dir($dbDir)) {
+            if (!@mkdir($dbDir, 0700, true) && !is_dir($dbDir)) {
+                throw new MDSSQLiteBackupException("Backup directory {$dbDir} does not exist and could not be created.");
+            }
+        }
+
+        if (!is_writable($dbDir)) {
+            throw new MDSSQLiteBackupException("Backup directory {$dbDir} is not writable by the current process.");
+        }
+
+        $dbFileExisted = file_exists($this->dbPath);
+
+        try {
+            $this->db = new SQLite3($this->dbPath);
+            $this->db->busyTimeout($this->busyTimeout);
+            $this->db->exec('PRAGMA journal_mode = WAL;');
+        } catch (Exception $e) {
+            throw new MDSSQLiteBackupException("Failed to connect to SQLite database '{$this->dbPath}': " . $e->getMessage(), 0, $e);
+        }
+
+        if (!$dbFileExisted && file_exists($this->dbPath)) {
+            $this->ensureDatabaseFilePermissions();
+        }
+
+        $this->ensureSchema();
+        return $this->db;
+    }
+
+    /**
+     * @return void
+     * @throws MDSSQLiteBackupException
+     */
+    private function ensureDatabaseFilePermissions(): void
+    {
+        if (!@chmod($this->dbPath, self::DB_FILE_PERMISSIONS)) {
+            throw new MDSSQLiteBackupException("Could not chmod database file {$this->dbPath} to " . decoct(self::DB_FILE_PERMISSIONS) . ". File system or permission problem.");
         }
     }
 
     /**
-     * Backup one record to csv
-     * @param $db
-     * @param $table
-     * @param $field
-     * @param $id
-     * @param $data
+     * Create DB .
+     *
+     * @throws MDSSQLiteBackupException
      */
-    public function backup($db, $table, $field, $key, $id, $data)
+    private function ensureSchema(): void
     {
-        if (isset($this->uniq[$db][$table][$field][$key][$id])) {
+        if (!$this->db) {
+            throw new MDSSQLiteBackupException("Database connection not available for ensureSchema.");
+        }
+
+        $commands = [
+            "CREATE TABLE IF NOT EXISTS " . self::TABLE_NAME . " (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signature_id TEXT NOT NULL,
+                db_name TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                key_name TEXT NOT NULL,
+                key_value TEXT NOT NULL,
+                original_content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                is_restored INTEGER NOT NULL DEFAULT 0,
+                app_root_path TEXT NULL,
+                app_name TEXT NOT NULL,
+                scan_id TEXT NOT NULL
+            );",
+            "CREATE INDEX IF NOT EXISTS idx_signature_restore ON " . self::TABLE_NAME . " (signature_id, is_restored, app_root_path, created_at);",
+            "CREATE INDEX IF NOT EXISTS idx_path_restore ON " . self::TABLE_NAME . " (app_root_path, app_name, is_restored, created_at);",
+            "CREATE INDEX IF NOT EXISTS idx_ttl_prune ON " . self::TABLE_NAME . " (created_at);",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_finding ON " . self::TABLE_NAME . " (signature_id, db_name, table_name, field_name, key_name, key_value, scan_id);"
+        ];
+
+        foreach ($commands as $command) {
+            if (!$this->db->exec($command)) {
+                $errorMsg = $this->db->lastErrorMsg();
+                throw new MDSSQLiteBackupException("Failed to initialize database schema: " . $errorMsg . " - SQL: " . $command);
+            }
+        }
+    }
+
+    /**
+     * Prune old records based on TTL.
+     *
+     * @return int Number of records.
+     * @throws MDSSQLiteBackupException
+     */
+    public function pruneRecords(): int
+    {
+        $db = $this->connect();
+        $backupTTLConfigValue = $this->config->get(MDSConfig::PARAM_BACKUP_TTL);
+        $backupTTL = filter_var($backupTTLConfigValue, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+        if ($backupTTL === false || $backupTTL <= 0) {
+            return 0;
+        }
+
+        $expiryTimestamp = time() - $backupTTL;
+
+        $stmt = $db->prepare("DELETE FROM " . self::TABLE_NAME . " WHERE created_at < :expiry_timestamp");
+        if (!$stmt) {
+            throw new MDSSQLiteBackupException("Failed to prepare prune statement: " . $db->lastErrorMsg());
+        }
+        $stmt->bindValue(':expiry_timestamp', $expiryTimestamp, SQLITE3_INTEGER);
+
+        $result = @$stmt->execute();
+        if (!$result) {
+            $errorMsg = $db->lastErrorMsg();
+            $stmt->close();
+            throw new MDSSQLiteBackupException("Failed to execute prune statement: " . $errorMsg);
+        }
+
+        $prunedCount = $db->changes();
+        $stmt->close();
+
+        return $prunedCount;
+    }
+
+    /**
+     * @param string $signature_id
+     * @param string $db_name
+     * @param string $table_name
+     * @param string $field_name
+     * @param string $key_name
+     * @param string $key_value
+     * @param string $original_content
+     * @param string|null $app_root_path
+     * @param string $app_name
+     * @param string|null $scan_id
+     * @return int
+     * @throws MDSSQLiteBackupException
+     */
+    public function backup(
+        string $signature_id,
+        string $db_name,
+        string $table_name,
+        string $field_name,
+        string $key_name,
+        string $key_value,
+        string $original_content,
+        ?string $app_root_path,
+        string $app_name,
+        string $scan_id
+    ): ?int {
+        $db = $this->connect();
+
+        $encodedContent = base64_encode($original_content);
+        $createdAt = time();
+        $isRestored = 0;
+
+        $sql = "INSERT INTO " . self::TABLE_NAME . " (
+            signature_id, db_name, table_name, field_name, key_name, key_value,
+            original_content, created_at, is_restored, app_root_path, app_name, scan_id
+        ) VALUES (
+            :signature_id, :db_name, :table_name, :field_name, :key_name, :key_value,
+            :original_content, :created_at, :is_restored, :app_root_path, :app_name, :scan_id
+        ) ON CONFLICT(
+            signature_id, db_name, table_name, field_name, key_name, key_value, scan_id
+        ) DO NOTHING;";
+
+        $stmt = $db->prepare($sql);
+        if (!$stmt) {
+            throw new MDSSQLiteBackupException("Failed to prepare backup insert statement: " . $db->lastErrorMsg());
+        }
+
+        $stmt->bindValue(':signature_id', $signature_id, SQLITE3_TEXT);
+        $stmt->bindValue(':db_name', $db_name, SQLITE3_TEXT);
+        $stmt->bindValue(':table_name', $table_name, SQLITE3_TEXT);
+        $stmt->bindValue(':field_name', $field_name, SQLITE3_TEXT);
+        $stmt->bindValue(':key_name', $key_name, SQLITE3_TEXT);
+        $stmt->bindValue(':key_value', $key_value, SQLITE3_TEXT);
+        $stmt->bindValue(':original_content', $encodedContent, SQLITE3_TEXT);
+        $stmt->bindValue(':created_at', $createdAt, SQLITE3_INTEGER);
+        $stmt->bindValue(':is_restored', $isRestored, SQLITE3_INTEGER);
+        $stmt->bindValue(':app_root_path', $app_root_path, ($app_root_path === null) ? SQLITE3_NULL : SQLITE3_TEXT);
+        $stmt->bindValue(':app_name', $app_name, SQLITE3_TEXT);
+        $stmt->bindValue(':scan_id', $scan_id, SQLITE3_TEXT);
+
+        $result = @$stmt->execute();
+        $lastId = null;
+        $changes = $db->changes();
+
+        if (!$result) {
+            $errorCode = $db->lastErrorCode();
+            $errorMsg = $db->lastErrorMsg();
+            $stmt->close();
+            if (!($errorCode === 19 && stripos($errorMsg, 'UNIQUE constraint failed') !== false)) {
+                throw new MDSSQLiteBackupException("Failed to execute backup insert statement: " . $errorMsg, $errorCode);
+            }
+        } else {
+            if ($changes > 0) {
+                $lastId = $db->lastInsertRowID();
+                if ($lastId === 0 || $lastId === false) {
+                    $stmt->close();
+                    throw new MDSSQLiteBackupException("Backup insert reported changes, but lastInsertRowID is invalid.");
+                }
+            }
+            $stmt->close();
+        }
+        return $lastId;
+    }
+
+    /**
+     * @return void
+     */
+    public function close(): void
+    {
+        if ($this->db instanceof SQLite3) {
+            $this->db->close();
+            $this->db = null;
+        }
+    }
+
+    /**
+     * @return SQLite3|null
+     */
+    public function __destruct()
+    {
+        $this->close();
+    }
+}
+
+class MDSSQLiteBackupException extends Exception
+{
+}
+
+class MDSSQLiteRestore
+{
+    /** @var SQLite3|null */
+    private $db = null;
+    /** @var MDSConfig */
+    private $config;
+
+    private string $dbPath;
+    private int $busyTimeout = 3000; //3 sec
+
+    public function __construct(MDSConfig $config)
+    {
+        $this->config = $config;
+        $this->dbPath = $this->config->get(MDSConfig::PARAM_SQLITE_DB_PATH) ?: (MDSSQLiteBackup::DB_DIR_DEFAULT . '/' . MDSSQLiteBackup::DB_FILE_NAME_DEFAULT);
+    }
+
+    /**
+     * @return SQLite3
+     * @throws MDSSQLiteRestoreException
+     */
+    private function connect(): SQLite3
+    {
+        if ($this->db instanceof SQLite3) {
+            return $this->db;
+        }
+        if (!file_exists($this->dbPath)) {
+            throw new MDSSQLiteRestoreException("SQLite database file '{$this->dbPath}' does not exist. Backup system may not have run yet.");
+        }
+        try {
+            $this->db = new SQLite3($this->dbPath, SQLITE3_OPEN_READWRITE);
+            $this->db->busyTimeout($this->busyTimeout);
+            $this->db->exec('PRAGMA journal_mode = WAL;');
+        } catch (Exception $e) {
+            throw new MDSSQLiteRestoreException("Failed to connect to SQLite database '{$this->dbPath}': " . $e->getMessage(), 0, $e);
+        }
+        return $this->db;
+    }
+
+    /**
+     * @param string $app_root_path
+     * @param string|null $app_name
+     * @return array
+     * @throws MDSSQLiteRestoreException
+     */
+    public function selectForAppRestore(string $app_root_path, ?string $app_name = null): array
+    {
+        $db = $this->connect();
+        $sql = "SELECT id, signature_id, db_name, table_name, field_name, key_name, key_value, original_content, app_name, app_root_path, scan_id
+                FROM " . MDSSQLiteBackup::TABLE_NAME . "
+                WHERE app_root_path = :app_root_path";
+
+        if ($app_name !== null) {
+            $sql .= " AND app_name = :app_name";
+        }
+
+        $sql .= " AND is_restored = 0 ORDER BY created_at DESC;";
+
+        $stmt = $db->prepare($sql);
+        if (!$stmt) {
+            throw new MDSSQLiteRestoreException("Failed to prepare select statement for app restore: " . $db->lastErrorMsg());
+        }
+
+        $stmt->bindValue(':app_root_path', $app_root_path, SQLITE3_TEXT);
+        if ($app_name !== null) {
+            $stmt->bindValue(':app_name', $app_name, SQLITE3_TEXT);
+        }
+
+        $result = $stmt->execute();
+        if (!$result) {
+            $errorMsg = $db->lastErrorMsg();
+            $stmt->close();
+            throw new MDSSQLiteRestoreException("Failed to execute select statement for app restore: " . $errorMsg);
+        }
+
+        $records = $this->processSelectResult($result);
+        $stmt->close();
+        return $records;
+    }
+
+    /**
+     * @param string $signature_id
+     * @param string $app_root_path
+     * @param string|null $app_name
+     * @return array
+     * @throws MDSSQLiteRestoreException
+     */
+    public function selectForSignatureRestore(string $signature_id, string $app_root_path, ?string $app_name = null): array
+    {
+        $db = $this->connect();
+        $sql = "SELECT id, signature_id, db_name, table_name, field_name, key_name, key_value, original_content, app_name, app_root_path, scan_id, is_restored
+                FROM " . MDSSQLiteBackup::TABLE_NAME . "
+                WHERE signature_id = :signature_id AND app_root_path = :app_root_path AND is_restored = 0";
+
+        if ($app_name !== null) {
+            $sql .= " AND app_name = :app_name";
+        }
+
+        $sql .= " ORDER BY created_at DESC;";
+
+        $stmt = $db->prepare($sql);
+        if (!$stmt) {
+            throw new MDSSQLiteRestoreException("Failed to prepare select statement for signature restore: " . $db->lastErrorMsg());
+        }
+
+        $stmt->bindValue(':signature_id', $signature_id, SQLITE3_TEXT);
+        $stmt->bindValue(':app_root_path', $app_root_path, SQLITE3_TEXT);
+        if ($app_name !== null) {
+            $stmt->bindValue(':app_name', $app_name, SQLITE3_TEXT);
+        }
+
+
+        $result = $stmt->execute();
+        if (!$result) {
+            $errorMsg = $db->lastErrorMsg();
+            $stmt->close();
+            throw new MDSSQLiteRestoreException("Failed to execute select statement for signature restore: " . $errorMsg);
+        }
+
+        $records = $this->processSelectResult($result);
+        $stmt->close();
+        return $records;
+    }
+
+    /**
+     * @param int $backupId
+     * @return bool
+     * @throws MDSSQLiteRestoreException
+     */
+    public function markAsRestored(int $backupId): bool
+    {
+        $db = $this->connect();
+        $sql = "UPDATE " . MDSSQLiteBackup::TABLE_NAME . " SET is_restored = 1 WHERE id = :id AND is_restored = 0;";
+
+        $stmt = $db->prepare($sql);
+        if (!$stmt) {
+            throw new MDSSQLiteRestoreException("Failed to prepare update statement for marking as restored: " . $db->lastErrorMsg());
+        }
+
+        $stmt->bindValue(':id', $backupId, SQLITE3_INTEGER);
+
+        $result = $stmt->execute();
+        if (!$result) {
+            $errorMsg = $db->lastErrorMsg();
+            $stmt->close();
+            throw new MDSSQLiteRestoreException("Failed to execute update statement for marking as restored: " . $errorMsg);
+        }
+
+        $changes = $db->changes();
+        $stmt->close();
+
+        return $changes > 0;
+    }
+
+    /**
+     * @param SQLite3Result $result
+     * @return array
+     * @throws MDSSQLiteRestoreException
+     */
+    private function processSelectResult(SQLite3Result $result): array
+    {
+        $records = [];
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            if (isset($row['original_content'])) {
+                $decodedContent = base64_decode($row['original_content']);
+                if ($decodedContent === false) {
+                    throw new MDSSQLiteRestoreException("Failed to base64 decode original_content for backup ID {$row['id']}.");
+                }
+                $row['original_content'] = $decodedContent;
+            }
+            $records[] = $row;
+        }
+        return $records;
+    }
+
+    /**
+     * @param array $record
+     * @param mysqli $mysql_connection
+     * @param MDSJSONReport $report
+     * @param Logger|null $log
+     * @return bool
+     * @throws MDSSQLiteRestoreException
+     */
+    private function _performMysqlUpdateAndMarkRestored(
+        array $record,
+        mysqli $mysql_connection,
+        MDSJSONReport $report,
+        ?Logger $log
+    ): bool {
+        $original_content = $record['original_content'];
+
+        $update_query = sprintf(
+            "UPDATE `%s`.`%s` SET `%s` = ? WHERE `%s` = ?",
+            $record['db_name'],
+            $record['table_name'],
+            $record['field_name'],
+            $record['key_name']
+        );
+
+        $stmt = $mysql_connection->prepare($update_query);
+        if (!$stmt) {
+            $errorMsg = "Failed to prepare MySQL update: " . $mysql_connection->error;
+            if ($log) $log->error("MDSSQLiteRestore: " . $errorMsg);
+            $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name']);
+            return false;
+        }
+
+        $stmt->bind_param('ss', $original_content, $record['key_value']);
+        $success = $stmt->execute();
+        $affected_rows = $stmt->affected_rows;
+        $stmt->close();
+
+        if ($success && $affected_rows > 0) {
+            if ($this->markAsRestored($record['id'])) {
+                if ($log) $log->info("MDSSQLiteRestore: Successfully restored row ID {$record['key_value']} in table {$record['table_name']}. Backup ID {$record['id']} marked as restored.");
+                $report->addRestored($record['table_name'], $record['key_value'], $record['field_name']);
+                return true;
+            } else {
+                $errorMsg = "MDSSQLiteRestore: Restored row ID {$record['key_value']} in MySQL, but FAILED to mark backup ID {$record['id']} as restored in SQLite.";
+                if ($log) $log->error($errorMsg);
+                $report->addRestored($record['table_name'], $record['key_value'], $record['field_name']);
+                $report->addError(MDSErrors::MDS_SQLITE_MARK_RESTORED_ERROR, "Failed for backup ID " . $record['id']);
+                return true;
+            }
+        } elseif ($success && $affected_rows === 0) {
+            $errorMsg = "MDSSQLiteRestore: MySQL UPDATE for row ID {$record['key_value']} in table {$record['table_name']} affected 0 rows. Content might be unchanged or row missing.";
+            if ($log) $log->info($errorMsg);
+            $report->addRestored($record['table_name'], $record['key_value'], $record['field_name']);
+            $this->markAsRestored($record['id']);
+            return true;
+        } else {
+            $errorMsg = "MDSSQLiteRestore: Failed to restore row ID {$record['key_value']} in table {$record['table_name']}. MySQL error: " . $mysql_connection->error;
+            if ($log) $log->error($errorMsg);
+            $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name']);
+            return false;
+        }
+    }
+
+    /**
+     * @param array $record
+     * @param mysqli $mysql_connection
+     * @param MDSJSONReport $report
+     * @param Logger|null $log
+     * @return bool
+     */
+    private function _performMysqlUpdate(
+        array $record,
+        mysqli $mysql_connection,
+        MDSJSONReport $report,
+        ?Logger $log
+    ): bool {
+        $original_content = $record['original_content'];
+
+        $update_query = sprintf(
+            "UPDATE `%s`.`%s` SET `%s` = ? WHERE `%s` = ?",
+            $record['db_name'],
+            $record['table_name'],
+            $record['field_name'],
+            $record['key_name']
+        );
+
+        $stmt = $mysql_connection->prepare($update_query);
+        if (!$stmt) {
+            $errorMsg = "Failed to prepare MySQL update: " . $mysql_connection->error;
+            if ($log) {
+                $log->error("MDSSQLiteRestore: " . $errorMsg);
+            }
+            $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name']);
+            return false;
+        }
+
+        $stmt->bind_param('ss', $original_content, $record['key_value']);
+        $success = $stmt->execute();
+        $stmt->close();
+
+        if ($success) {
+            return true;
+        }
+
+        $errorMsg = "MDSSQLiteRestore: Failed to restore row ID {$record['key_value']} in table {$record['table_name']}. MySQL error: " . $mysql_connection->error;
+        if ($log) {
+            $log->error($errorMsg);
+        }
+        $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name']);
+        return false;
+    }
+
+    /**
+     * @param string $app_root_path
+     * @param string|null $app_name
+     * @param mysqli $mysql_connection
+     * @param MDSJSONReport $report
+     * @param MDSState|null $state
+     * @param Logger|null $log
+     * @param int $max_restore_batch
+     * @return void
+     * @throws MDSSQLiteRestoreException
+     */
+    public function restoreAllForAppPath(
+        string $app_root_path,
+        ?string $app_name,
+        mysqli $mysql_connection,
+        MDSJSONReport $report,
+        ?MDSState $state,
+        ?Logger $log,
+        int $max_restore_batch
+    ): void {
+        if ($state && $state->isCanceled()) {
+            if ($log) {
+                $log->info("MDSSQLiteRestore: Restore all for app path '{$app_root_path}' canceled before start.");
+            }
+            $report->setState(MDSJSONReport::STATE_CANCELED);
             return;
         }
-        fputcsv($this->hmemory, [$db, $table, $field, $key, $id, base64_encode($data)]);
-        $size = fstat($this->hmemory);
-        $size = $size['size'];
-        if ($size > 32768) {
-            $this->flush();
+
+        $recordsToRestore = $this->selectForAppRestore($app_root_path, $app_name);
+        if (empty($recordsToRestore)) {
+            if ($log) {
+                $log->info("MDSSQLiteRestore: No unrestored backups found for app path '{$app_root_path}'" . ($app_name ? " and app '{$app_name}'." : "."));
+            }
+            return;
         }
-        $this->uniq[$db][$table][$field][$key][$id] = '';
-    }
 
-    /**
-     * Backup array of records to csv
-     * @param $rows
-     */
-    public function backupBatch($rows)
-    {
-        foreach ($rows as list($db, $table, $field, $key, $id, $data)) {
-             $this->backup($db, $table, $field, $key, $id, $data);
+        $cellsToRestore = [];
+        foreach ($recordsToRestore as $record) {
+            $cellKey = sprintf(
+                '%s:%s:%s:%s',
+                $record['db_name'],
+                $record['table_name'],
+                $record['field_name'],
+                $record['key_value']
+            );
+            $cellsToRestore[$cellKey][] = $record;
+        }
+
+        if ($log) {
+            $log->info("MDSSQLiteRestore: Found " . count($cellsToRestore) . " unique cells to restore from " . count($recordsToRestore) . " backup records for app path '{$app_root_path}'.");
+        }
+
+        $restoredCellCount = 0;
+        foreach ($cellsToRestore as $cellKey => $recordsInCell) {
+            if ($state && $state->isCanceled()) {
+                if ($log) {
+                    $log->info("MDSSQLiteRestore: Restore all for app path '{$app_root_path}' canceled during processing.");
+                }
+                $report->setState(MDSJSONReport::STATE_CANCELED);
+                break;
+            }
+
+            $representativeRecord = $recordsInCell[0];
+
+            if ($this->_performMysqlUpdate($representativeRecord, $mysql_connection, $report, $log)) {
+                $restoredCellCount++;
+                foreach ($recordsInCell as $recordToMark) {
+                    if ($this->markAsRestored($recordToMark['id'])) {
+                        $report->addRestored($recordToMark['table_name'], $recordToMark['key_value'], $recordToMark['field_name']);
+                    }
+                }
+            }
+
+            if ($restoredCellCount >= $max_restore_batch && $max_restore_batch > 0) {
+                if ($log) {
+                    $log->info("MDSSQLiteRestore: Reached max restore batch of {$max_restore_batch}.");
+                }
+                break;
+            }
+        }
+        if ($log) {
+            $log->info("MDSSQLiteRestore: Finished restoring for app path '{$app_root_path}'. Processed " . $restoredCellCount . " cells.");
         }
     }
 
     /**
-     * Flush to disk and close handles
+     * @param string $signature_id
+     * @param string $app_root_path
+     * @param string|null $app_name
+     * @param mysqli $mysql_connection
+     * @param MDSJSONReport $report
+     * @param MDSState|null $state
+     * @param Logger|null $log
+     * @param int $max_restore_batch
+     * @return void
+     * @throws MDSSQLiteRestoreException
      */
-    public function finish()
-    {
-        $this->uniq = [];
-        $this->flush();
-        fclose($this->hmemory);
-        fclose($this->fhandle);
+    public function restoreBySignatureId(
+        string $signature_id,
+        string $app_root_path,
+        ?string $app_name,
+        mysqli $mysql_connection,
+        MDSJSONReport $report,
+        ?MDSState $state,
+        ?Logger $log,
+        int $max_restore_batch
+    ): void {
+        if ($state && $state->isCanceled()) {
+            if ($log) $log->info("MDSSQLiteRestore: Restore by signature '{$signature_id}' for app '{$app_root_path}' canceled before start.");
+            $report->setState(MDSJSONReport::STATE_CANCELED);
+            return;
+        }
+
+        $recordsToRestore = $this->selectForSignatureRestore($signature_id, $app_root_path, $app_name);
+
+        if (empty($recordsToRestore)) {
+            if ($log) $log->info("MDSSQLiteRestore: No unrestored backups found for signature_id '{$signature_id}' matching app path '{$app_root_path}'" . ($app_name ? " and app '{$app_name}'." : "."));
+            return;
+        }
+
+        if ($log) $log->info("MDSSQLiteRestore: Found " . count($recordsToRestore) . " records to restore for signature_id '{$signature_id}' and app path '{$app_root_path}'.");
+
+        $restoredCount = 0;
+        foreach ($recordsToRestore as $record) {
+            if ($state && $state->isCanceled()) {
+                if ($log) $log->info("MDSSQLiteRestore: Restore by signature '{$signature_id}' for app '{$app_root_path}' canceled during processing.");
+                $report->setState(MDSJSONReport::STATE_CANCELED);
+                break;
+            }
+            if ($this->_performMysqlUpdateAndMarkRestored($record, $mysql_connection, $report, $log)) {
+                $restoredCount++;
+            }
+            if ($restoredCount >= $max_restore_batch && $max_restore_batch > 0) {
+                if ($log) $log->info("MDSSQLiteRestore: Reached max restore batch of {$max_restore_batch}.");
+                break;
+            }
+        }
+        if ($log) $log->info("MDSSQLiteRestore: Finished restoring for signature_id '{$signature_id}' and app path '{$app_root_path}'. Processed " . $restoredCount . " records.");
     }
 
-    /**
-     * Flush to disk
-     */
-    private function flush()
+
+
+    public function close(): void
     {
-        rewind($this->hmemory);
-        stream_copy_to_stream($this->hmemory, $this->fhandle);
-        fflush($this->fhandle);
-        rewind($this->hmemory);
-        ftruncate($this->hmemory, 0);
+        if ($this->db instanceof SQLite3) {
+            $this->db->close();
+            $this->db = null;
+        }
     }
+
+    public function __destruct()
+    {
+        $this->close();
+    }
+}
+
+class MDSSQLiteRestoreException extends Exception
+{
 }
 
 class MDSCleanup
 {
-    public static function clean($entry, $clean_db, $connection, $query, $field, $key, $report = null, $table_config = null)
-    {
+    /**
+     * @param $entry
+     * @param LoadSignaturesForClean|null $clean_signatures_obj
+     * @param $connection
+     * @param $query
+     * @param $field
+     * @param $key
+     * @param MDSSQLiteBackup|null $sqliteBackupManager
+     * @param string|null $app_root_path_from_context
+     * @param string $app_name_from_context
+     * @param string|null $scan_id_from_context
+     * @param MDSJSONReport|null $report
+     * @param Logger|null $log
+     * @param array|null $table_config
+     * @return array|false
+     */
+    public static function clean(
+        $entry,
+        ?LoadSignaturesForClean $clean_signatures_obj,
+        $connection,
+        $query,
+        $field,
+        $key,
+        ?MDSSQLiteBackup $sqliteBackupManager = null,
+        ?string $app_root_path_from_context = null,
+        string $app_name_from_context = 'unknown',
+        ?string $scan_id_from_context = null,
+        ?MDSJSONReport $report = null,
+        ?Logger $log = null,
+        ?array $table_config = null
+    ) {
         $old_content = $entry->getContent();
         $c = $entry->getB64decodedContent() ?? $entry->getContent();
-        $clean_result = CleanUnit::CleanContent($c, $clean_db, true, $table_config['escaped'] ?? false);
-        if ($clean_result) {
+
+        $clean_result_details = CleanUnit::CleanContent($c, $clean_signatures_obj, true, $table_config['escaped'] ?? false);
+        if ($clean_result_details) {
+            if ($sqliteBackupManager !== null) {
+                foreach ($clean_result_details as $cleaned_item) {
+                    if (!isset($cleaned_item['id'])) {
+                        continue;
+                    }
+                    $actual_cleaning_sig_id = $cleaned_item['id'];
+
+                    $current_app_name = $app_name_from_context ?: ($table_config['app_name'] ?? 'unknown');
+
+                    try {
+                        $sqliteBackupManager->backup(
+                            $actual_cleaning_sig_id,
+                            $query->getDB(),
+                            $query->getTable(),
+                            $entry->getField(),
+                            $query->getKey(),
+                            $entry->getKey(),
+                            $old_content,
+                            $app_root_path_from_context,
+                            $current_app_name,
+                            $scan_id_from_context ?: "manual_scan_id_fallback"
+                        );
+                    } catch (MDSSQLiteBackupException $e) {
+                        if ($log) {
+                            $log->error("MDSCleanup: SQLite backup failed for row (key: {$entry->getKey()}) in {$query->getTable()}: " . $e->getMessage());
+                        }
+                        if ($report) {
+                            $report->addCleanedError(
+                                $actual_cleaning_sig_id,
+                                $entry->getScan() ? $entry->getScan()->getSnippet() : 'N/A',
+                                $query->getTable(),
+                                $entry->getKey(),
+                                $entry->getField(),
+                                MDSErrors::MDS_SQLITE_BACKUP_ROW_ERROR
+                            );
+                        }
+                        return false;
+                    }
+                }
+            }
+
             if ($entry->getB64decodedContent() !== null) {
                 $c = base64_encode($c);
             }
@@ -3432,34 +4323,67 @@ class MDSCleanup
             $query_str = 'UPDATE `' . $query->getDb() . '`.`' . $query->getTable() . '` SET `' . $field . '`=UNHEX(\'' . bin2hex($c) . '\')';
             $query_str .= ' WHERE `' . $query->getKey() . '`=' . $key . ' AND `' . $field . '`=UNHEX(\'' . bin2hex($old_content) . '\');';
             if ($connection->query($query_str) && $connection->affected_rows === 1 && $old_content !== $c) {
-                return $clean_result;
+                return $clean_result_details;
             }
         }
         return false;
     }
 
     /**
-     * @param MDSProcessingList $list
+     * @param $list
      * @param $detected
      * @param $cleaned
-     * @param $clean_db
+     * @param LoadSignaturesForClean|null $clean_signatures_obj
      * @param $connection
      * @param $query
      * @param $progress
      * @param $table_config
-     *
+     * @param MDSSQLiteBackup|null $sqliteBackupManager
+     * @param string|null $app_root_path_from_context
+     * @param string $app_name_from_context
+     * @param string|null $scan_id_from_context
+     * @param MDSJSONReport|null $report
+     * @param Logger|null $log
      * @return void
      */
-    public static function cleanBatch($list, $detected, &$cleaned, $clean_db, $connection, $query, $progress = null, $table_config = null)
-    {
+    public static function cleanBatch(
+        $list,
+        $detected,
+        &$cleaned,
+        ?LoadSignaturesForClean $clean_signatures_obj,
+        $connection,
+        $query,
+        $progress = null,
+        $table_config = null,
+        ?MDSSQLiteBackup $sqliteBackupManager = null,
+        ?string $app_root_path_from_context = null,
+        string $app_name_from_context = 'unknown',
+        ?string $scan_id_from_context = null,
+        ?MDSJSONReport $report = null,
+        ?Logger $log = null
+    ) {
         if (!$list->isEntriesForclean()) {
             return;
         }
         @$connection->begin_transaction(MYSQLI_TRANS_START_READ_WRITE);
         foreach ($list->getEntriesForClean() as $index => $entry) {
-            $clean = self::clean($entry, $clean_db, $connection, $query, $entry->getField(), $entry->getKey(), null, $table_config);
-            $list->addCleanResult($index, $clean);
-            if ($clean) {
+            $clean_action_details = self::clean(
+                $entry,
+                $clean_signatures_obj,
+                $connection,
+                $query,
+                $entry->getField(),
+                $entry->getKey(),
+                $sqliteBackupManager,
+                $app_root_path_from_context,
+                $app_name_from_context,
+                $scan_id_from_context,
+                $report,
+                $log,
+                $table_config
+            );
+            $list->addCleanResult($index, $clean_action_details);
+            if ($clean_action_details) {
                 $cleaned++;
             }
             if ($progress instanceof MDSProgress) {
@@ -3829,7 +4753,13 @@ class MDSErrors
     const MDS_NO_SCANNED                = 19;
     const MDS_NO_REPORT                 = 20;
     const MDS_NO_BACKUP                 = 21;
-
+    const MDS_SQLITE_PRUNE_ERROR        = 22;
+    const MDS_SQLITE_BACKUP_ROW_ERROR   = 23;
+    const MDS_SQLITE_CONNECTION_ERROR   = 24;
+    const MDS_SQLITE_SCHEMA_ERROR       = 25;
+    const MDS_SQLITE_RESTORE_ERROR      = 26;
+    const MDS_SQLITE_MARK_RESTORED_ERROR = 27;
+    const MDS_INVALID_ARGS              = 28;
     const MDS_CLEANUP_ERROR             = 101;
     const MDS_RESTORE_UPDATE_ERROR      = 102;
 
@@ -3855,13 +4785,23 @@ class MDSErrors
         self::MDS_CMS_CONFIG_NOTSUP           => 'Can\'t parse config for CMS: %s',
         self::MDS_MULTIPLE_DBS                => 'For multiple DBs (%s) we support only scan, please select one db for work.',
         self::MDS_NO_SCANNED                  => 'No database to process.',
-        self::MDS_NO_REPORT                  =>  'No --report-file option specified',
-        self::MDS_NO_BACKUP                  =>  'No --backup-file option specified',
+        self::MDS_NO_REPORT                   =>  'No --report-file option specified',
+        self::MDS_NO_BACKUP                   =>  'No --backup-file option specified',
+        self::MDS_SQLITE_PRUNE_ERROR          => 'SQLite backup pruning operation failed: %s',
+        self::MDS_SQLITE_BACKUP_ROW_ERROR     => 'SQLite backup for a specific row failed: %s',
+        self::MDS_SQLITE_CONNECTION_ERROR     => 'SQLite database connection/setup error: %s',
+        self::MDS_SQLITE_SCHEMA_ERROR         => 'SQLite database schema/index creation error: %s',
+        self::MDS_SQLITE_RESTORE_ERROR        => 'SQLite restore operation failed: %s',
+        self::MDS_SQLITE_MARK_RESTORED_ERROR  => 'SQLite failed to mark record as restored: %s',
+        self::MDS_INVALID_ARGS                => 'Invalid arguments provided: %s',
     ];
 
     public static function getErrorMessage($errcode, ...$args)
     {
-        return vsprintf(self::MESSAGES[$errcode] ?? 'An unknown error occurred.', ...$args);
+        if (is_array($args[0]) && count($args) === 1) {
+            return vsprintf(self::MESSAGES[$errcode] ?? 'An unknown error occurred.', $args[0]);
+        }
+        return vsprintf(self::MESSAGES[$errcode] ?? 'An unknown error occurred.', $args);
     }
 }
 
@@ -3873,7 +4813,13 @@ class MDSException extends Exception
     public function __construct($errcode, ...$args)
     {
         $this->_errcode = $errcode;
-        $this->_errmsg = MDSErrors::getErrorMessage($errcode, $args);
+        if (empty($args)) {
+            $this->_errmsg = MDSErrors::getErrorMessage($errcode);
+        } elseif (is_array($args[0]) && count($args) === 1) {
+            $this->_errmsg = MDSErrors::getErrorMessage($errcode, ...$args[0]);
+        } else {
+            $this->_errmsg = MDSErrors::getErrorMessage($errcode, ...$args);
+        }
         parent::__construct($this->_errmsg);
     }
 
@@ -4122,7 +5068,8 @@ class MDSDetachedMode
     protected $complete = [
         'scan' => 'MALWARE_SCAN_COMPLETE',
         'clean' => 'MALWARE_CLEAN_COMPLETE',
-        'restore' => 'MALWARE_RESTORE_COMPLETE'
+        'restore' => 'MALWARE_RESTORE_COMPLETE',
+        'restore-sig-id' => 'MALWARE_RESTORE_COMPLETE'
     ];
 
     protected $op = null;
