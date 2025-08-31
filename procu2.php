@@ -1319,7 +1319,7 @@ class CleanUnit
                         if (!empty($normal_fnd)) {
                             $pos = Normalization::string_pos($file_content, $normal_fnd);
                             if ($pos !== false) {
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $norm_fnd, $file_content);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $norm_fnd);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, false, false);
                                 if ($l_UnicodeContent) {
@@ -1331,7 +1331,7 @@ class CleanUnit
                         if (!empty($unescaped_normal_fnd)) {
                             $pos = Normalization::string_pos($file_content, $unescaped_normal_fnd, true);
                             if ($pos !== false) {
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_norm_fnd, $file_content);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_norm_fnd);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, true);
                                 if ($l_UnicodeContent) {
@@ -1344,7 +1344,7 @@ class CleanUnit
                             $pos = Normalization::string_pos($file_content, $un_fnd, true);
                             if ($pos !== false) {
                                 $matched_not_cleaned = false;
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_fnd, $file_content);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_fnd);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, true);
                                 if ($l_UnicodeContent) {
@@ -1624,18 +1624,12 @@ class CleanUnit
         return $result;
     }
 
-    private static function getReplaceFromRegExp($replace, $matches, $file_content = "")
+    private static function getReplaceFromRegExp($replace, $matches)
     {
         if (!empty($replace)) {
             if (preg_match('~\$(\d+)~smi', $replace)) {
-                $replace = preg_replace_callback('~\$(\d+)~smi', function ($m) use ($matches, $file_content) {
-                    $pos = isset($matches[(int)$m[1]]) ? Normalization::string_pos($file_content, $matches[(int)$m[1]][0]) : false;
-                    if ($pos) {
-                        $str = substr($file_content, $pos[0], $pos[1] - $pos[0] + 1);
-                    } else {
-                        $str = isset($matches[(int)$m[1]]) ? $matches[(int)$m[1]][0] : '';
-                    }
-                    return $str;
+                $replace = preg_replace_callback('~\$(\d+)~smi', function ($m) use ($matches) {
+                    return isset($matches[(int)$m[1]]) ? $matches[(int)$m[1]][0] : '';
                 }, $replace);
             }
         }
@@ -21020,7 +21014,7 @@ class LoadSignaturesForScan
                 . '('                                       //capture $i count of tokens to captured group:
                     . '(?>'                                 //  capture one token + quantifier to one atomic group:
                         . '(?:'                             //    capture one token of regex to one non-captured group:
-                            . '\\\\.'                       //      capture escaped symbol or regex token (\d, \s, \n ...) as one token
+                            . '(?:\\\\[0-7]{1,3}|\\\\.)'    //      capture escaped symbol or regex token (\d, \s, \n ...) as one token
                             . '|\\\\[.+?\\\\]'              //      OR capture escaped special regex symbols as one token (\., \+, \?, \\)
                             . '|[^\[(\n]'                   //      OR don't capture chars [ - start of charset, ( - start of group, \n - end of line
                             . '|\((?:\\\\.|[^)(\n])++\)'    //      OR capture group as one token (....)
@@ -21108,7 +21102,7 @@ class LoadSignaturesForScan
             $len += strlen($s);
             //if it's first signature in array, then we don't need to recalculate backreferences
             $noСhange = $firstLine ?: ($len > $limit);
-            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
+            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([1-9]\d*)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
                 if ($matches[1] <= $prefixGroupCount || $noСhange || $matches[1] > ($prefixGroupCount + $groupCount)) {
                     return $matches[0];
                 }

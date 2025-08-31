@@ -17,7 +17,7 @@ if (!defined('CLS_SCAN_CHECKERS')) {
 }
 
 if (!defined('MDS_VERSION')) {
-    define('MDS_VERSION', 'HOSTER-32.5.2');
+    define('MDS_VERSION', 'HOSTER-32.7.2');
 }
 
 $scan_signatures    = null;
@@ -122,13 +122,14 @@ if (
     throw new MDSException(MDSErrors::MDS_NO_REPORT);
 }
 
-if (
-    $detached === null
-    && $config->get(MDSConfig::PARAM_CLEAN)
-    && $config->get(MDSConfig::PARAM_BACKUP_FILEPATH) === ''
-    && !@is_writable('/var/imunify360/tmp')
-) {
-    throw new MDSException(MDSErrors::MDS_NO_BACKUP);
+if ($config->get(MDSConfig::PARAM_CLEAN) && $detached === null) {
+    $hasLegacyBackupPath = $config->get(MDSConfig::PARAM_BACKUP_FILEPATH) !== '';
+    $hasSqliteBackupPath = $config->get(MDSConfig::PARAM_SQLITE_DB_PATH) !== '' && $config->get(MDSConfig::PARAM_SQLITE_DB_PATH) !== '/var/imunify360/cleanup_storage/mds_backup.sqlite3';
+    $hasDefaultTmp = @is_writable('/var/imunify360/tmp');
+
+    if (!$hasLegacyBackupPath && !$hasSqliteBackupPath && !$hasDefaultTmp) {
+        throw new MDSException(MDSErrors::MDS_NO_BACKUP);
+    }
 }
 
 $progress = new MDSProgress($config->get(MDSConfig::PARAM_PROGRESS));
@@ -1286,7 +1287,6 @@ Usage: php {$_SERVER['PHP_SELF']} [OPTIONS]
       --shared-mem-progress=<shmem_id>  ID of shared memory segment
       --create-shared-mem               MDS create own shared memory segment
       --state=<filepath>                Filepath with state for control task
-      --backup-filepath=<filepath>      Backup file
       --avdb=<filepath>                 Filepath with ai-bolit signatures db
       --procudb=<filepath>              Filepath with procu signatures db
       --state-file=<filepath>           Filepath with info about state(content: new|working|done|canceled). You can change it on canceled
@@ -1615,6 +1615,8 @@ class MDSJSONReport
 
     const STATE_DONE        = 'done';
     const STATE_CANCELED    = 'canceled';
+
+
 
     private $start_time         = '';
     private $report_filename    = '';
@@ -1956,26 +1958,31 @@ class MDSJSONReport
     }
 
     /**
-     * Add restored info
-     * @param string $table_name
-     * @param int $row_id
-     * @param string $field
+     *  Add restored info
+     * @param $table_name
+     * @param $row_id
+     * @param $field
+     * @param $signature_id
      * @return void
      */
-    public function addRestored($table_name, $row_id, $field = '')
+    public function addRestored($table_name, $row_id, $field = '', $signature_id = '')
     {
-        $this->addSignatureRowId('', '', $table_name, $row_id, $field, [], self::STATUS_RESTORE, $this->report);
+        $this->addSignatureRowId($signature_id, '', $table_name, $row_id, $field, [], self::STATUS_RESTORE, $this->report);
         $this->rows_restored++;
     }
 
     /**
      * Add restored error info
-     * @param string $error_code
+     * @param $error_code
+     * @param $table_name
+     * @param $row_id
+     * @param $field
+     * @param $signature_id
      * @return void
      */
-    public function addRestoredError($error_code, $table_name, $row_id, $field = '')
+    public function addRestoredError($error_code, $table_name, $row_id, $field = '', $signature_id = '')
     {
-        $this->addSignatureError('', '', $table_name, $row_id, $field, $error_code, self::STATUS_RESTORE, $this->report);
+        $this->addSignatureError($signature_id, '', $table_name, $row_id, $field, $error_code, self::STATUS_RESTORE, $this->report);
     }
 
     /**
@@ -3991,7 +3998,7 @@ class MDSSQLiteRestore
         if (!$stmt) {
             $errorMsg = "Failed to prepare MySQL update: " . $mysql_connection->error;
             if ($log) $log->error("MDSSQLiteRestore: " . $errorMsg);
-            $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name']);
+            $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name'], $record['signature_id']);
             return false;
         }
 
@@ -4003,25 +4010,25 @@ class MDSSQLiteRestore
         if ($success && $affected_rows > 0) {
             if ($this->markAsRestored($record['id'])) {
                 if ($log) $log->info("MDSSQLiteRestore: Successfully restored row ID {$record['key_value']} in table {$record['table_name']}. Backup ID {$record['id']} marked as restored.");
-                $report->addRestored($record['table_name'], $record['key_value'], $record['field_name']);
+                $report->addRestored($record['table_name'], $record['key_value'], $record['field_name'], $record['signature_id']);
                 return true;
             } else {
                 $errorMsg = "MDSSQLiteRestore: Restored row ID {$record['key_value']} in MySQL, but FAILED to mark backup ID {$record['id']} as restored in SQLite.";
                 if ($log) $log->error($errorMsg);
-                $report->addRestored($record['table_name'], $record['key_value'], $record['field_name']);
+                $report->addRestored($record['table_name'], $record['key_value'], $record['field_name'], $record['signature_id']);
                 $report->addError(MDSErrors::MDS_SQLITE_MARK_RESTORED_ERROR, "Failed for backup ID " . $record['id']);
                 return true;
             }
         } elseif ($success && $affected_rows === 0) {
             $errorMsg = "MDSSQLiteRestore: MySQL UPDATE for row ID {$record['key_value']} in table {$record['table_name']} affected 0 rows. Content might be unchanged or row missing.";
             if ($log) $log->info($errorMsg);
-            $report->addRestored($record['table_name'], $record['key_value'], $record['field_name']);
+            $report->addRestored($record['table_name'], $record['key_value'], $record['field_name'], $record['signature_id']);
             $this->markAsRestored($record['id']);
             return true;
         } else {
             $errorMsg = "MDSSQLiteRestore: Failed to restore row ID {$record['key_value']} in table {$record['table_name']}. MySQL error: " . $mysql_connection->error;
             if ($log) $log->error($errorMsg);
-            $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name']);
+            $report->addRestoredError(MDSErrors::MDS_SQLITE_RESTORE_ERROR, $record['table_name'], $record['key_value'], $record['field_name'], $record['signature_id']);
             return false;
         }
     }
@@ -4096,69 +4103,96 @@ class MDSSQLiteRestore
         int $max_restore_batch
     ): void {
         if ($state && $state->isCanceled()) {
-            if ($log) {
-                $log->info("MDSSQLiteRestore: Restore all for app path '{$app_root_path}' canceled before start.");
-            }
+            if ($log) $log->info("MDSSQLiteRestore: Restore all for app path '{$app_root_path}' canceled before start.");
             $report->setState(MDSJSONReport::STATE_CANCELED);
             return;
         }
 
-        $recordsToRestore = $this->selectForAppRestore($app_root_path, $app_name);
-        if (empty($recordsToRestore)) {
-            if ($log) {
-                $log->info("MDSSQLiteRestore: No unrestored backups found for app path '{$app_root_path}'" . ($app_name ? " and app '{$app_name}'." : "."));
-            }
+        $db = $this->connect();
+
+        // Step 1: Find the scan_id of the most recent backup for this app path.
+        $latestScanIdSql = "SELECT scan_id FROM " . MDSSQLiteBackup::TABLE_NAME . " WHERE app_root_path = :app_root_path";
+        if ($app_name !== null) {
+            $latestScanIdSql .= " AND app_name = :app_name";
+        }
+        $latestScanIdSql .= " ORDER BY created_at DESC LIMIT 1;";
+
+        $stmt = $db->prepare($latestScanIdSql);
+        $stmt->bindValue(':app_root_path', $app_root_path, SQLITE3_TEXT);
+        if ($app_name !== null) {
+            $stmt->bindValue(':app_name', $app_name, SQLITE3_TEXT);
+        }
+        $result = $stmt->execute();
+        $latestScanIdRow = $result->fetchArray(SQLITE3_ASSOC);
+        $stmt->close();
+
+        if (!$latestScanIdRow || empty($latestScanIdRow['scan_id'])) {
+            if ($log) $log->info("MDSSQLiteRestore: No backups found for app path '{$app_root_path}'. Nothing to restore.");
             return;
         }
 
-        $cellsToRestore = [];
+        $latestScanId = $latestScanIdRow['scan_id'];
+
+        // Step 2: Select ALL unrestored records for that specific scan_id.
+        $recordsToRestore = $this->selectForScanIdRestore($latestScanId);
+
+        if (empty($recordsToRestore)) {
+            // If we found a scan_id but no unrestored records for it, then it's already been restored.
+            if ($log) $log->error("MDSSQLiteRestore: Attempted to restore scan_id '{$latestScanId}', but all its records are already marked as restored.");
+            throw new MDSException(MDSErrors::MDS_SQLITE_ALREADY_RESTORED);
+        }
+
+        if ($log) $log->info("MDSSQLiteRestore: Found " . count($recordsToRestore) . " records to restore for scan_id '{$latestScanId}'.");
+
+        $restoredCount = 0;
         foreach ($recordsToRestore as $record) {
-            $cellKey = sprintf(
-                '%s:%s:%s:%s',
-                $record['db_name'],
-                $record['table_name'],
-                $record['field_name'],
-                $record['key_value']
-            );
-            $cellsToRestore[$cellKey][] = $record;
-        }
-
-        if ($log) {
-            $log->info("MDSSQLiteRestore: Found " . count($cellsToRestore) . " unique cells to restore from " . count($recordsToRestore) . " backup records for app path '{$app_root_path}'.");
-        }
-
-        $restoredCellCount = 0;
-        foreach ($cellsToRestore as $cellKey => $recordsInCell) {
             if ($state && $state->isCanceled()) {
-                if ($log) {
-                    $log->info("MDSSQLiteRestore: Restore all for app path '{$app_root_path}' canceled during processing.");
-                }
+                if ($log) $log->info("MDSSQLiteRestore: Restore for scan '{$latestScanId}' canceled during processing.");
                 $report->setState(MDSJSONReport::STATE_CANCELED);
                 break;
             }
-
-            $representativeRecord = $recordsInCell[0];
-
-            if ($this->_performMysqlUpdate($representativeRecord, $mysql_connection, $report, $log)) {
-                $restoredCellCount++;
-                foreach ($recordsInCell as $recordToMark) {
-                    if ($this->markAsRestored($recordToMark['id'])) {
-                        $report->addRestored($recordToMark['table_name'], $recordToMark['key_value'], $recordToMark['field_name']);
-                    }
-                }
+            if ($this->_performMysqlUpdateAndMarkRestored($record, $mysql_connection, $report, $log)) {
+                $restoredCount++;
             }
-
-            if ($restoredCellCount >= $max_restore_batch && $max_restore_batch > 0) {
-                if ($log) {
-                    $log->info("MDSSQLiteRestore: Reached max restore batch of {$max_restore_batch}.");
-                }
+            if ($restoredCount >= $max_restore_batch && $max_restore_batch > 0) {
+                if ($log) $log->info("MDSSQLiteRestore: Reached max restore batch of {$max_restore_batch}.");
                 break;
             }
         }
-        if ($log) {
-            $log->info("MDSSQLiteRestore: Finished restoring for app path '{$app_root_path}'. Processed " . $restoredCellCount . " cells.");
-        }
+        if ($log) $log->info("MDSSQLiteRestore: Finished restoring for app path '{$app_root_path}'. Processed " . $restoredCount . " records from scan '{$latestScanId}'.");
     }
+
+    /**
+     * @param string $scan_id
+     * @return array
+     * @throws MDSSQLiteRestoreException
+     */
+    public function selectForScanIdRestore(string $scan_id): array
+    {
+        $db = $this->connect();
+        $sql = "SELECT id, signature_id, db_name, table_name, field_name, key_name, key_value, original_content, app_name, app_root_path, scan_id
+                FROM " . MDSSQLiteBackup::TABLE_NAME . "
+                WHERE scan_id = :scan_id AND is_restored = 0;";
+
+        $stmt = $db->prepare($sql);
+        if (!$stmt) {
+            throw new MDSSQLiteRestoreException("Failed to prepare select statement for scan_id restore: " . $db->lastErrorMsg());
+        }
+
+        $stmt->bindValue(':scan_id', $scan_id, SQLITE3_TEXT);
+
+        $result = $stmt->execute();
+        if (!$result) {
+            $errorMsg = $db->lastErrorMsg();
+            $stmt->close();
+            throw new MDSSQLiteRestoreException("Failed to execute select statement for scan_id restore: " . $errorMsg);
+        }
+
+        $records = $this->processSelectResult($result);
+        $stmt->close();
+        return $records;
+    }
+
 
     /**
      * @param string $signature_id
@@ -4762,6 +4796,8 @@ class MDSErrors
     const MDS_INVALID_ARGS              = 28;
     const MDS_CLEANUP_ERROR             = 101;
     const MDS_RESTORE_UPDATE_ERROR      = 102;
+    const MDS_SQLITE_ALREADY_RESTORED   = 103;
+
 
     const MESSAGES = [
         self::MDS_CONNECT_ERROR               => 'Can\'t connect to database: %s',
@@ -5076,6 +5112,9 @@ class MDSDetachedMode
 
     public function __construct($scan_id, $op, $basedir = '/var/imunify360/dbscan/run', $sock_file = '/var/run/defence360agent/generic_sensor.sock.2')
     {
+        if ($op === MDSConfig::PARAM_RESTORE_SIG_ID) {
+            $op = MDSConfig::PARAM_RESTORE;
+        }
         $basedir = $basedir . DIRECTORY_SEPARATOR . $op;
         $this->scan_id  = $scan_id;
         $this->setWorkDir($basedir, $scan_id);
@@ -5425,16 +5464,17 @@ class MDSCMSAddon
      * @param string $ending
      * @return false|string|null
      */
-    function removeEndingPath(string $fullPath, string $ending)
+    function removeEndingPath(string $fullPath, string $configRelativePath)
     {
         $fullPath = rtrim($fullPath, DIRECTORY_SEPARATOR);
-        $ending = ltrim($ending, DIRECTORY_SEPARATOR);
+        $configRelativePath = ltrim($configRelativePath, DIRECTORY_SEPARATOR);
 
-        if (substr($fullPath, -strlen($ending)) === $ending) {
-            return substr($fullPath, 0, -strlen($ending));
+        if (substr($fullPath, -strlen($configRelativePath)) === $configRelativePath) {
+            $basePath = substr($fullPath, 0, -strlen($configRelativePath));
+            return rtrim($basePath, DIRECTORY_SEPARATOR);
         }
 
-        return null;
+        return false;
     }
     public function parseConfig()
     {
@@ -7418,7 +7458,7 @@ class LoadSignaturesForScan
                 . '('                                       //capture $i count of tokens to captured group:
                     . '(?>'                                 //  capture one token + quantifier to one atomic group:
                         . '(?:'                             //    capture one token of regex to one non-captured group:
-                            . '\\\\.'                       //      capture escaped symbol or regex token (\d, \s, \n ...) as one token
+                            . '(?:\\\\[0-7]{1,3}|\\\\.)'    //      capture escaped symbol or regex token (\d, \s, \n ...) as one token
                             . '|\\\\[.+?\\\\]'              //      OR capture escaped special regex symbols as one token (\., \+, \?, \\)
                             . '|[^\[(\n]'                   //      OR don't capture chars [ - start of charset, ( - start of group, \n - end of line
                             . '|\((?:\\\\.|[^)(\n])++\)'    //      OR capture group as one token (....)
@@ -7506,7 +7546,7 @@ class LoadSignaturesForScan
             $len += strlen($s);
             //if it's first signature in array, then we don't need to recalculate backreferences
             $noСhange = $firstLine ?: ($len > $limit);
-            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
+            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([1-9]\d*)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
                 if ($matches[1] <= $prefixGroupCount || $noСhange || $matches[1] > ($prefixGroupCount + $groupCount)) {
                     return $matches[0];
                 }
@@ -26881,7 +26921,7 @@ class CleanUnit
                         if (!empty($normal_fnd)) {
                             $pos = Normalization::string_pos($file_content, $normal_fnd);
                             if ($pos !== false) {
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $norm_fnd, $file_content);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $norm_fnd);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, false, false);
                                 if ($l_UnicodeContent) {
@@ -26893,7 +26933,7 @@ class CleanUnit
                         if (!empty($unescaped_normal_fnd)) {
                             $pos = Normalization::string_pos($file_content, $unescaped_normal_fnd, true);
                             if ($pos !== false) {
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_norm_fnd, $file_content);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_norm_fnd);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, true);
                                 if ($l_UnicodeContent) {
@@ -26906,7 +26946,7 @@ class CleanUnit
                             $pos = Normalization::string_pos($file_content, $un_fnd, true);
                             if ($pos !== false) {
                                 $matched_not_cleaned = false;
-                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_fnd, $file_content);
+                                $replace = self::getReplaceFromRegExp($rec['sig_replace'], $unescaped_fnd);
                                 $ser = false;
                                 $file_content = self::replaceString($file_content, $replace, $pos[0], $pos[1] - $pos[0] + 1, $is_crontab, $ser, true);
                                 if ($l_UnicodeContent) {
@@ -27186,18 +27226,12 @@ class CleanUnit
         return $result;
     }
 
-    private static function getReplaceFromRegExp($replace, $matches, $file_content = "")
+    private static function getReplaceFromRegExp($replace, $matches)
     {
         if (!empty($replace)) {
             if (preg_match('~\$(\d+)~smi', $replace)) {
-                $replace = preg_replace_callback('~\$(\d+)~smi', function ($m) use ($matches, $file_content) {
-                    $pos = isset($matches[(int)$m[1]]) ? Normalization::string_pos($file_content, $matches[(int)$m[1]][0]) : false;
-                    if ($pos) {
-                        $str = substr($file_content, $pos[0], $pos[1] - $pos[0] + 1);
-                    } else {
-                        $str = isset($matches[(int)$m[1]]) ? $matches[(int)$m[1]][0] : '';
-                    }
-                    return $str;
+                $replace = preg_replace_callback('~\$(\d+)~smi', function ($m) use ($matches) {
+                    return isset($matches[(int)$m[1]]) ? $matches[(int)$m[1]][0] : '';
                 }, $replace);
             }
         }

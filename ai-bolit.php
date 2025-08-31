@@ -1,7 +1,7 @@
 <?php
 
 ///////////////////////////////////////////////////////////////////////////
-// Version: 32.5.2
+// Version: 32.7.2
 // Copyright 2018-2025 CloudLinux Software Inc.
 ///////////////////////////////////////////////////////////////////////////
 
@@ -36,7 +36,8 @@ define('I360_AIBOLIT_MAP', [
     'MALWARE_SCAN_INTENSITY.user_scan_ram' => 'memory_limit',
     'MALWARE_SCANNING.hyperscan' => 'hyperscan',
     'MALWARE_SCANNING.max_cloudscan_size_to_scan' => 'max_size_to_cloudscan',
-    'MALWARE_SCANNING.max_signature_size_to_scan' => 'max_size_to_scan'
+    'MALWARE_SCANNING.max_signature_size_to_scan' => 'max_size_to_scan',
+    'MALWARE_SCANNING.detect_admin_tools'         => 'detect-admin-tools',
 ]);
 
 function parseConfigFile($filepath, &$defaults)
@@ -175,7 +176,7 @@ if (!(function_exists("file_put_contents") && is_callable("file_put_contents")))
     exit;
 }
 
-define('AI_VERSION', '32.5.2');
+define('AI_VERSION', '32.7.2');
 
 ////////////////////////////////////////////////////////////////////////////
 $g_SpecificExt = false;
@@ -334,6 +335,9 @@ if (isCli()) {
     $reports = [];
 
     $options = getopt(implode('', array_keys($cli_options)), $cli_longopts);
+    if (isset($defaults['detect-admin-tools']) && $defaults['detect-admin-tools']) {
+        $options['detect-admin-tools'] = true;
+    }
 
     $collectDecisionStats = false;
     if (
@@ -427,6 +431,7 @@ Current default path is: {$defaults['path']}
         --scan-archive                    Scan zip files (Works with Resident mode)
         --archive-max-size=<size>         Scan zip files are smaller than SIZE in megabyte(s) (Works with Resident mode and with --scan-archive option) default 20MB
         --max-num-files-in-archive=<num>  Scan zip total files are smaller than QUANTITY (Works with Resident mode and with --scan-archive option) default 100
+        --detect-admin-tools              Mark admin tools as malware. By default, they are marked as suspicious.
 
   Functional Cloud Assisted:
         --cloud-assist=TOKEN              Enable cloud assisted scanning. Disabled by default.
@@ -643,7 +648,8 @@ HELP;
 
     if (isset($options['shared-mem-progress']) && !empty($options['shared-mem-progress']) && ($sh_mem = $options['shared-mem-progress']) !== false) {
         if (!Progress::setSharedMem($sh_mem)) {
-            die('Error with shared-memory.');
+            fwrite(STDERR, "Error with shared-memory." . PHP_EOL);
+            exit(1);
         }
     }
 
@@ -803,7 +809,9 @@ HELP;
     }
 
     $defaults['use_template_in_path'] = isset($options['use-template-in-path']);
-    $defaults['detect-admin-tools'] = isset($options['detect-admin-tools']);
+    if (isset($options['detect-admin-tools'])) {
+        $defaults['detect-admin-tools'] = true;
+    }
 
     if (isset($options['noprefix']) && !empty($options['noprefix']) && ($g_NoPrefix = $options['noprefix']) !== false) {
     } else {
@@ -2396,7 +2404,7 @@ class LoadSignaturesForScan
                 . '('                                       //capture $i count of tokens to captured group:
                     . '(?>'                                 //  capture one token + quantifier to one atomic group:
                         . '(?:'                             //    capture one token of regex to one non-captured group:
-                            . '\\\\.'                       //      capture escaped symbol or regex token (\d, \s, \n ...) as one token
+                            . '(?:\\\\[0-7]{1,3}|\\\\.)'    //      capture escaped symbol or regex token (\d, \s, \n ...) as one token
                             . '|\\\\[.+?\\\\]'              //      OR capture escaped special regex symbols as one token (\., \+, \?, \\)
                             . '|[^\[(\n]'                   //      OR don't capture chars [ - start of charset, ( - start of group, \n - end of line
                             . '|\((?:\\\\.|[^)(\n])++\)'    //      OR capture group as one token (....)
@@ -2484,7 +2492,7 @@ class LoadSignaturesForScan
             $len += strlen($s);
             //if it's first signature in array, then we don't need to recalculate backreferences
             $noСhange = $firstLine ?: ($len > $limit);
-            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([0-9]+)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
+            $s = preg_replace_callback('/(?:(?<!\\\\)|(?<=\\\\\\\\))\\\\([1-9]\d*)/', function ($matches) use ($totalGroupCount, $prefixGroupCount, $groupCount, $noСhange) {
                 if ($matches[1] <= $prefixGroupCount || $noСhange || $matches[1] > ($prefixGroupCount + $groupCount)) {
                     return $matches[0];
                 }
@@ -3972,26 +3980,49 @@ class JSONReport extends Report
         return (($mask & $need) == $need);
     }
 
+    /**
+     * @return string
+     */
     public function write()
     {
         $ret = '';
         $res = @json_encode($this->raw_report);
         if ($res === false) {
-            fwrite(STDERR, 'Warning: [JSONReport] ' . json_last_error_msg() . PHP_EOL);
+            $error = json_last_error_msg();
+            fwrite(STDERR, 'Warning: [JSONReport] ' . $error . PHP_EOL);
+            if (isset($this->raw_report['summary']['errors']) && is_array($this->raw_report['summary']['errors'])) {
+                $this->raw_report['summary']['errors'][] = 'json_encode failed: ' . $error;
+            }
             $res = @json_encode($this->raw_report, JSON_INVALID_UTF8_SUBSTITUTE);
         }
-        if ($this->file !== '.' && $l_FH = fopen($this->file . '.tmp', 'w')) {
-            fputs($l_FH, $res);
-            fclose($l_FH);
-            if (rename($this->file . '.tmp', $this->file)) {
-                $ret = "Report written to '$this->file'.";
+
+        if ($res === false || $res === '' || $res === 'null') {
+            $error = json_last_error_msg();
+            fwrite(STDERR, 'Warning: [JSONReport] fallback json_encode failed: ' . $error . PHP_EOL);
+            $report_preview = substr(print_r($this->raw_report, true), 0, 300);
+            $error_message = 'json_encode failed: ' . $error . '. Raw report preview: ' . $report_preview;
+            $final_report = ['summary' => ['errors' => [$error_message]]];
+            $res = json_encode($final_report);
+        }
+
+        if ($this->echo || $this->file === '.') {
+            echo $res;
+        }
+
+        if ($this->file && $this->file !== '.') {
+            if (($l_FH = @fopen($this->file . '.tmp', 'w'))) {
+                fputs($l_FH, $res);
+                fclose($l_FH);
+                if (@rename($this->file . '.tmp', $this->file)) {
+                    $ret = "Report written to '$this->file'.";
+                } else {
+                    $ret = "Cannot create '$this->file'.";
+                }
             } else {
                 $ret = "Cannot create '$this->file'.";
             }
         }
-        if ($this->echo) {
-            echo $res;
-        }
+
         return $ret;
     }
 
@@ -5540,6 +5571,9 @@ class ResidentMode
     protected $upload_jobs = [];
     protected $notify_jobs = [];
 
+    private $sanitize_signatures = false;
+    private $mnemo = [];
+
     /**
      * ResidentMode constructor.
      *
@@ -5590,6 +5624,9 @@ class ResidentMode
         $this->report = $report;
         $this->logger = $logger;
         $this->options = $options;
+
+        $this->sanitize_signatures = !($options['detect-admin-tools'] ?? false);
+        $this->mnemo = $signs->_Mnemo ?? [];
 
         umask(0000);
         if (!file_exists($this->resident_dir)) {
@@ -5740,6 +5777,9 @@ class ResidentMode
 
     protected function writeReport($vars, $scan_time, $type, $file)
     {
+        // Apply sanitization before generating reports
+        $this->moveSanitizedToExtSuspicious($vars);
+
         $file = AibolitHelpers::getBaseName($file);
         $critPHP = count($vars->criticalPHP);
         $critJS = count($vars->criticalJS);
@@ -6065,6 +6105,67 @@ class ResidentMode
         ResidentStats::setStartTime(START_TIME);
         ResidentStats::sendStatData();
         $this->last_send_stat = AibolitHelpers::currentTime();
+    }
+
+    protected function moveSanitizedToExtSuspicious(&$vars)
+    {
+        if (!$this->sanitize_signatures) {
+            return;
+        }
+        $moveToExtSuspicious = function (&$srcArr, &$srcFragment, &$srcSig, &$vars, $black = false) {
+            $toMove = [];
+            $targetArr = 'suspiciousExt';
+            $targetFragment = 'suspiciousExtFragment';
+            $targetSig = 'suspiciousExtSig';
+            foreach ($srcArr as $i => $idx) {
+                $sig = null;
+                if (is_array($srcSig[$i])) {
+                    $l_SigId = $black ? crc32($vars->structure['n'][$srcArr[$i]]) : key($srcSig[$i]);
+                    $sig = $black ? $srcSig[$i][key($srcSig[$i])] : $srcSig[$i][$l_SigId];
+                } else {
+                    $sig = isset($this->mnemo[$srcSig[$i]]) ? $this->mnemo[$srcSig[$i]] : $srcSig[$i];
+                }
+
+                if ($this->shouldSanitizeSignature($sig)) {
+                    $sanitized = $this->sanitizeSignatureName($sig);
+                    if ($sanitized !== $sig) {
+                        $vars->$targetArr[] = $idx;
+                        if (is_array($srcFragment) && isset($srcFragment[$i])) {
+                            $vars->$targetFragment[] = $srcFragment[$i];
+                        }
+                        $vars->$targetSig[] = $sanitized;
+                        $toMove[] = $i;
+                    }
+                }
+            }
+            foreach (array_reverse($toMove) as $i) {
+                array_splice($srcArr, $i, 1);
+                if (is_array($srcFragment) && isset($srcFragment[$i])) {
+                    array_splice($srcFragment, $i, 1);
+                }
+                if (isset($srcSig[$i])) {
+                    array_splice($srcSig, $i, 1);
+                }
+            }
+        };
+        $moveToExtSuspicious($vars->criticalPHP, $vars->criticalPHPFragment, $vars->criticalPHPSig, $vars);
+        $moveToExtSuspicious($vars->criticalJS, $vars->criticalJSFragment, $vars->criticalJSSig, $vars);
+        $moveToExtSuspicious($vars->warningPHP, $vars->warningPHPFragment, $vars->warningPHPSig, $vars);
+        $dummy = null;
+        $moveToExtSuspicious($vars->blackFiles, $dummy, $vars->blackFilesSig, $vars, true);
+    }
+
+    protected function shouldSanitizeSignature($sig)
+    {
+        // Match admin.tool, admin-tool, admin.tools, admin-tools
+        return $this->sanitize_signatures
+            && is_string($sig)
+            && preg_match('/admin[\.\-]tools?/', $sig);
+    }
+
+    protected function sanitizeSignatureName($sig)
+    {
+        return preg_replace('/-(BLKH-SA|BLKH|INJ|SA)-/', '-ESUS-', $sig);
     }
 }
 
